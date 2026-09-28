@@ -1,40 +1,42 @@
 # claude-gearshift
 
-给 Claude Code 换挡 —— 在 Linux 上快速切换模型/供应商配置，保留其他设置不变。
+**English | [简体中文](README.zh-CN.md)**
 
-提供两种使用方式，共用同一个 `config/` 目录和同一套切换逻辑（备份 → 只替换 `env` → 原子写入）：
+Shift gears for Claude Code — quickly switch model/provider configs on Linux while leaving every other setting untouched.
 
-| 方式 | 路径 | 说明 |
+Two ways to use it, sharing the same `config/` directory and the same switch semantics (back up → replace `env` only → atomic write):
+
+| Mode | Path | Description |
 |---|---|---|
-| 终端脚本 | `switch_claude_config.sh` | 交互式菜单，`bash` + `jq` |
-| Web UI | `dd-switch/` | Flask + waitress，浏览器操作，密码保护 |
+| CLI script | `switch_claude_config.sh` | Interactive menu, `bash` + `jq` |
+| Web UI | `dd-switch/` | Flask + waitress, browser-based, password-protected |
 
-## 终端脚本用法
+## CLI Script Usage
 
 ```bash
-# 默认从 ./config/ 目录读取配置
+# Reads configs from ./config/ by default
 ./switch_claude_config.sh
 
-# 指定配置目录
+# Or point it at another config directory
 ./switch_claude_config.sh ~/.claude/configs/
 ```
 
-## Web UI 用法
+## Web UI Usage
 
 ```bash
 cd dd-switch
 python3 app.py
-# 打开 http://localhost:10086
+# open http://localhost:10086
 ```
 
-- 访问密码通过环境变量 `DD_SWITCH_PASSWORD` 设置（不设则默认 `admin`）
-- 生产模式 waitress；`DD_SWITCH_DEBUG=1` 时走 Flask dev server
-- 页面可直接查看 / 新建 / 编辑 / 删除 / 切换 `config/` 下的配置
-- 切换逻辑与终端脚本一致，两种方式可混用
+- Set the access password via the `DD_SWITCH_PASSWORD` env var (defaults to `admin`)
+- Production mode serves via waitress; `DD_SWITCH_DEBUG=1` falls back to Flask's dev server
+- Browse / create / edit / delete / switch configs under `config/` right from the page
+- Same switch semantics as the CLI script — both can be used interchangeably
 
-## 配置目录结构
+## Config Directory Structure
 
-将各份 Claude Code 配置 JSON 文件放入 `config/` 目录：
+Drop one JSON file per provider into `config/`:
 
 ```
 config/
@@ -44,7 +46,7 @@ config/
 └── cf_aws_bedrock.json
 ```
 
-每个 JSON 只需包含 `env` 字段，例如：
+Each JSON only needs an `env` block, for example:
 
 ```json
 {
@@ -56,28 +58,28 @@ config/
 }
 ```
 
-更多可选字段可参考 [Claude Code 环境变量](https://docs.anthropic.com/en/docs/claude-code/settings)。
+More optional fields: [Claude Code environment variables](https://docs.anthropic.com/en/docs/claude-code/settings).
 
-## 功能
+## Features
 
-| 步骤 | 说明 |
+| Step | What it does |
 |---|---|
-| **遍历** | 扫描指定目录下所有 `.json` 文件 |
-| **校验** | 使用 `jq` 检测 JSON 语法错误，无效文件跳过并列出原因 |
-| **展示** | 显示当前配置的 Base URL 和 Model |
-| **选择** | 交互菜单选择要切换的配置 |
-| **预览** | 切换前展示选中文件的完整内容 |
-| **确认** | 确认后才执行切换 |
-| **备份** | 自动备份原配置到 `settings.json.bak.时间戳` |
-| **合并** | 只替换 `env`（模型配置），保留 `theme` / `permissions` / `actions` / `skills` 等其他字段 |
-| **原子写入** | 临时文件 → `mv rename`，避免半写导致 JSON 损坏 |
+| **Scan** | Walks the config directory for `.json` files |
+| **Validate** | Syntax-checks each file with `jq`; invalid files are skipped with the reason |
+| **Summarize** | Shows the current config's Base URL and Model |
+| **Select** | Interactive menu to pick a config |
+| **Preview** | Prints the full selected file before switching |
+| **Confirm** | Switches only after explicit confirmation |
+| **Back up** | Backs up the current config to `settings.json.bak.<timestamp>` |
+| **Merge** | Replaces only `env`, preserving `theme` / `permissions` / `actions` / `skills` |
+| **Atomic write** | Temp file + `mv rename` — no half-written JSON |
 
-## 依赖
+## Dependencies
 
-- `bash` 4.0+（`mapfile` 支持）
-- `jq`（JSON 校验与合并）
+- `bash` 4.0+ (`mapfile` support)
+- `jq` (JSON validation & merge)
 
-安装 `jq`：
+Install `jq`:
 
 ```bash
 # Ubuntu/Debian
@@ -90,39 +92,39 @@ brew install jq
 sudo pacman -S jq
 ```
 
-## 工作流程示例
+## Workflow Example
 
 ```bash
-# 1. 准备配置
+# 1. Prepare configs
 mkdir -p config
 cp ~/.claude/settings.json config/cf_default.json
-# 手动编辑或下载其他配置
+# edit or fetch additional configs
 
-# 2. 切换
+# 2. Switch
 ./switch_claude_config.sh
 ```
 
 ```
 ════════════════════════════════════════════
- JSON 文件校验结果
+ JSON validation results
 ════════════════════════════════════════════
 
-  ✅ 有效文件: 3 个
+  ✅ Valid files: 3
 
 ════════════════════════════════════════════
- 当前配置
+ Current config
 ════════════════════════════════════════════
-   路径: /home/user/settings.json
+   Path: /home/user/settings.json
    Base URL: https://ark.cn-beijing.volces.com/api/coding
    Model:    deepseek-v4-flash
 
 ════════════════════════════════════════════
- 请选择要切换的配置文件:
+ Select a config file:
 ════════════════════════════════════════════
 
 1) config/cf_anthropic.json
 2) config/cf_ark_177.json
 3) config/cf_openrouter.json
 
-请输入编号 (或 0 退出):
+Enter a number (or 0 to quit):
 ```
