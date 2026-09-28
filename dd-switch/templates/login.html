@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>dd-switch - 验证</title>
+<style>
+  :root {
+    --bg: #1a1b2e; --surface: #232540; --card: #2a2d4a;
+    --border: #363a5a; --text: #e2e4f0; --muted: #888cad;
+    --accent: #6366f1; --accent-hover: #5457e5; --danger: #ef4444;
+    --radius: 8px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--text); min-height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .login-box {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 40px 36px; width: 360px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+  }
+  .login-box h1 { font-size: 20px; text-align: center; margin-bottom: 4px; }
+  .login-box p { font-size: 13px; color: var(--muted); text-align: center; margin-bottom: 24px; }
+  .login-box input[type="password"] {
+    width: 100%; padding: 10px 14px; border-radius: var(--radius);
+    border: 1px solid var(--border); background: #13142a; color: var(--text);
+    font-size: 15px; outline: none; transition: border-color .2s;
+  }
+  .login-box input[type="password"]:focus { border-color: var(--accent); }
+  .login-box button {
+    width: 100%; margin-top: 12px; padding: 10px;
+    border-radius: var(--radius); border: none; font-size: 14px; font-weight: 600;
+    background: var(--accent); color: #fff; cursor: pointer; transition: background .2s;
+  }
+  .login-box button:hover { background: var(--accent-hover); }
+  .error { color: var(--danger); font-size: 13px; text-align: center; margin-top: 12px; min-height: 18px; }
+</style>
+</head>
+<body>
+  <div class="login-box">
+    <h1>dd-switch</h1>
+    <p>请输入密码继续</p>
+    <form method="post" id="loginForm">
+      <input type="password" id="passwordInput" name="password" placeholder="密码" autofocus>
+      <button type="submit">验证</button>
+    </form>
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  </div>
+</body>
+</html>

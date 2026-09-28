@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>dd-switch - Claude Code 配置切换</title>
+<style>
+  :root {
+    --bg: #1a1b2e; --surface: #232540; --card: #2a2d4a;
+    --border: #363a5a; --text: #e2e4f0; --muted: #888cad;
+    --accent: #6366f1; --accent-hover: #5457e5; --danger: #ef4444;
+    --success: #22c55e; --warning: #f59e0b;
+    --radius: 8px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--text); min-height: 100vh;
+    display: flex; flex-direction: column;
+  }
+  header {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 16px 24px; display: flex; align-items: center; gap: 16px;
+  }
+  header h1 { font-size: 18px; font-weight: 600; }
+  header span { color: var(--muted); font-size: 13px; }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 500; }
+  .badge-ok { background: rgba(34,197,94,.15); color: var(--success); }
+  .badge-err { background: rgba(239,68,68,.15); color: var(--danger); }
+  .container { display: flex; flex: 1; min-height: 0; }
+  .sidebar {
+    width: 300px; min-width: 300px; background: var(--surface);
+    border-right: 1px solid var(--border); display: flex; flex-direction: column;
+  }
+  .sidebar-header {
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .sidebar-header h2 { font-size: 14px; font-weight: 600; }
+  .config-list { flex: 1; overflow-y: auto; padding: 8px; }
+  .config-item {
+    padding: 10px 12px; border-radius: var(--radius); cursor: pointer;
+    display: flex; align-items: center; gap: 8px; transition: background .15s;
+    border: 1px solid transparent; margin-bottom: 4px;
+  }
+  .config-item:hover { background: rgba(99,102,241,.08); }
+  .config-item.active { border-color: var(--accent); background: rgba(99,102,241,.12); }
+  .config-item .name { flex: 1; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .config-item .actions { display: flex; gap: 4px; opacity: 0; transition: opacity .15s; }
+  .config-item:hover .actions { opacity: 1; }
+  .config-item .actions button {
+    background: none; border: none; cursor: pointer; padding: 2px 4px;
+    border-radius: 4px; font-size: 13px; color: var(--muted); line-height: 1;
+  }
+  .config-item .actions button:hover { background: rgba(255,255,255,.08); }
+  .config-item .actions .btn-del:hover { color: var(--danger); }
+  .main {
+    flex: 1; display: flex; flex-direction: column; padding: 24px; gap: 16px;
+    overflow-y: auto;
+  }
+  .current-card {
+    background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 16px;
+  }
+  .current-card h3 { font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--muted); }
+  .current-card .row { display: flex; gap: 24px; font-size: 13px; }
+  .current-card .row dt { color: var(--muted); } .current-card .row dd { color: var(--text); }
+  .preview-area {
+    flex: 1; display: flex; flex-direction: column; min-height: 0;
+  }
+  .preview-area h3 { font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 8px; }
+  .preview-area textarea {
+    flex: 1; width: 100%; min-height: 200px; resize: vertical;
+    background: #13142a; color: #c9d1d9; border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 12px; font-family: "JetBrains Mono", "Fira Code", monospace;
+    font-size: 13px; line-height: 1.5; tab-size: 2;
+  }
+  .preview-area textarea:focus { outline: none; border-color: var(--accent); }
+  .toolbar {
+    display: flex; gap: 8px; align-items: center; margin-bottom: 8px;
+  }
+  .toolbar .file-name { font-size: 14px; font-weight: 500; flex: 1; }
+  .btn {
+    padding: 6px 14px; border-radius: var(--radius); border: 1px solid var(--border);
+    font-size: 13px; cursor: pointer; transition: all .15s; background: transparent; color: var(--text);
+  }
+  .btn:hover { background: rgba(255,255,255,.06); }
+  .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-danger { border-color: var(--danger); color: var(--danger); }
+  .btn-danger:hover { background: rgba(239,68,68,.1); }
+  .btn-success { background: var(--success); border-color: var(--success); color: #fff; }
+  .btn-success:hover { opacity: .9; }
+  .btn-sm { padding: 3px 10px; font-size: 12px; }
+  .toast {
+    position: fixed; bottom: 24px; right: 24px; padding: 12px 20px;
+    border-radius: var(--radius); font-size: 13px; z-index: 1000;
+    transform: translateY(80px); opacity: 0; transition: all .3s;
+    max-width: 400px;
+  }
+  .toast.show { transform: translateY(0); opacity: 1; }
+  .toast.info { background: var(--accent); color: #fff; }
+  .toast.success { background: var(--success); color: #fff; }
+  .toast.error { background: var(--danger); color: #fff; }
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5);
+    align-items: center; justify-content: center; z-index: 999;
+  }
+  .modal-overlay.show { display: flex; }
+  .modal {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 24px; max-width: 500px; width: 90%;
+  }
+  .modal h3 { margin-bottom: 12px; font-size: 16px; }
+  .modal p { font-size: 14px; color: var(--muted); margin-bottom: 20px; }
+  .modal .btns { display: flex; gap: 8px; justify-content: flex-end; }
+  .empty { text-align: center; padding: 40px 20px; color: var(--muted); font-size: 13px; }
+  input[type="text"] {
+    width: 100%; padding: 8px 12px; border-radius: var(--radius);
+    border: 1px solid var(--border); background: #13142a; color: var(--text);
+    font-size: 13px; margin-bottom: 12px;
+  }
+  input[type="text"]:focus { outline: none; border-color: var(--accent); }
+  .json-error { color: var(--danger); font-size: 12px; margin-top: 4px; display: none; }
+  .json-error.show { display: block; }
+  .spinner {
+    display: inline-block; width: 14px; height: 14px;
+    border: 2px solid var(--muted); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin .6s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🔀 dd-switch</h1>
+  <span>Claude Code 配置切换面板</span>
+  <span class="badge badge-ok" id="countBadge">0 个配置</span>
+  <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+    <a href="logout" class="btn btn-sm" style="text-decoration:none">退出登录</a>
+  </div>
+</header>
+
+<div class="container">
+  <!-- sidebar -->
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <h2>配置文件</h2>
+      <button class="btn btn-sm btn-primary" onclick="openNewConfig()">+ 新增</button>
+    </div>
+    <div class="config-list" id="configList">
+      <div class="empty">加载中...</div>
+    </div>
+  </div>
+
+  <!-- main -->
+  <div class="main">
+    <div class="current-card" id="currentCard">
+      <h3>当前使用中的配置</h3>
+      <div id="currentInfo">加载中...</div>
+      <div id="currentOtherFields"></div>
+    </div>
+
+    <div class="preview-area">
+      <div class="toolbar">
+        <span class="file-name" id="fileName">选择一个配置</span>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-sm btn-success" id="btnSwitch" onclick="confirmSwitch()" style="display:none">🔄 切换到此配置</button>
+          <button class="btn btn-sm" id="btnSave" onclick="saveConfig()" style="display:none">💾 保存</button>
+        </div>
+      </div>
+      <textarea id="editor" placeholder="选择左侧配置查看内容..." readonly></textarea>
+      <div class="json-error" id="jsonError">JSON 格式错误</div>
+    </div>
+  </div>
+</div>
+
+<!-- confirm modal -->
+<div class="modal-overlay" id="confirmModal">
+  <div class="modal">
+    <h3>确认切换配置</h3>
+    <p id="confirmMsg">确定要切换到该配置吗？当前配置将自动备份。</p>
+    <div class="btns">
+      <button class="btn" onclick="closeModal()">取消</button>
+      <button class="btn btn-primary" onclick="doSwitch()" id="confirmBtn">确认切换</button>
+    </div>
+  </div>
+</div>
+
+<!-- new config modal -->
+<div class="modal-overlay" id="newModal">
+  <div class="modal">
+    <h3>新增配置</h3>
+    <input type="text" id="newConfigName" placeholder="文件名（如 my_provider.json）" />
+    <textarea id="newConfigContent" rows="8" style="width:100%;background:#13142a;color:#c9d1d9;border:1px solid var(--border);border-radius:var(--radius);padding:10px;font-family:monospace;font-size:13px;resize:vertical" placeholder='{"env":{"ANTHROPIC_BASE_URL":"...","ANTHROPIC_MODEL":"..."}}'></textarea>
+    <div class="json-error" id="newJsonError" style="margin:4px 0 8px">JSON 格式错误</div>
+    <div class="btns">
+      <button class="btn" onclick="closeNewModal()">取消</button>
+      <button class="btn btn-primary" onclick="createConfig()">创建</button>
+    </div>
+  </div>
+</div>
+
+<!-- toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+let configs = [];
+let currentName = null;
+let editing = false;
+let isDirty = false;
+
+// --- Toast ---
+function toast(msg, type = "info") {
+  const el = document.getElementById("toast");
+  el.textContent = msg; el.className = `toast ${type}`;
+  el.classList.add("show");
+  setTimeout(() => el.classList.remove("show"), 3000);
+}
+
+// --- API ---
+async function api(method, path, body) {
+  const opts = { method, headers: {} };
+  if (body !== undefined) {
+    opts.headers["Content-Type"] = "application/json";
+    opts.body = JSON.stringify(body);
+  }
+  const r = await fetch(path, opts);
+  const data = await r.json();
+  if (data.login_required) {
+    window.location.href = "login";
+    throw new Error("登录已过期");
+  }
+  if (!r.ok) throw new Error(data.error || "请求失败");
+  return data;
+}
+
+// --- Load ---
+async function loadAll() {
+  await Promise.all([loadConfigs(), loadCurrent()]);
+}
+
+async function loadConfigs() {
+  const data = await api("GET", "api/configs");
+  configs = data.valid;
+  const el = document.getElementById("configList");
+  const badge = document.getElementById("countBadge");
+  const invalids = data.invalid || [];
+
+  if (configs.length === 0 && invalids.length === 0) {
+    el.innerHTML = '<div class="empty">暂无配置文件<br/>点击右上角"新增"创建</div>';
+    badge.textContent = "0 个配置";
+    return;
+  }
+
+  let html = "";
+  for (const c of configs) {
+    const active = c.name === currentName ? ' active' : '';
+    html += `<div class="config-item${active}" data-name="${c.name}" onclick="selectConfig('${c.name}')">
+      <span class="name">${c.name}</span>
+      <span class="actions">
+        <button onclick="event.stopPropagation();selectConfig('${c.name}')" title="编辑">✏️</button>
+        <button class="btn-del" onclick="event.stopPropagation();deleteConfig('${c.name}')" title="删除">🗑️</button>
+      </span>
+    </div>`;
+  }
+  for (const c of invalids) {
+    html += `<div class="config-item" style="opacity:.5;cursor:default">
+      <span class="name">${c.name} <span class="badge badge-err">无效</span></span>
+    </div>`;
+  }
+  el.innerHTML = html;
+  badge.textContent = `${configs.length} 个配置`;
+}
+
+async function loadCurrent() {
+  try {
+    const data = await api("GET", "api/current");
+    const el = document.getElementById("currentInfo");
+    const otherEl = document.getElementById("currentOtherFields");
+    if (!data.exists) {
+      el.innerHTML = '<span style="color:var(--warning)">尚未创建 settings.json</span>';
+      otherEl.innerHTML = "";
+      return;
+    }
+    currentName = null;
+    // Display env vars as a table
+    const env = data.env || {};
+    const other = data.other_fields || {};
+    let envHtml = '<table style="width:100%;font-size:13px;border-collapse:collapse">';
+    for (const [key, val] of Object.entries(env)) {
+      const displayVal = key === 'ANTHROPIC_AUTH_TOKEN' && val.length > 20
+        ? val.substring(0, 12) + '...'
+        : val;
+      envHtml += `<tr style="border-bottom:1px solid var(--border)"><td style="padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap;width:1%">${key}</td><td style="padding:4px 0;font-family:monospace;font-size:12px;word-break:break-all">${displayVal}</td></tr>`;
+    }
+    envHtml += '</table>';
+    el.innerHTML = envHtml;
+
+    let otherHtml = "";
+    if (Object.keys(other).length > 0) {
+      otherHtml = '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)"><h3 style="font-size:13px;font-weight:600;color:var(--muted);margin-bottom:4px">其他字段</h3><table style="width:100%;font-size:13px;border-collapse:collapse">';
+      for (const [key, val] of Object.entries(other)) {
+        const displayVal = typeof val === 'object' ? JSON.stringify(val) : String(val);
+        otherHtml += `<tr style="border-bottom:1px solid var(--border)"><td style="padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap;width:1%">${key}</td><td style="padding:4px 0;font-family:monospace;font-size:12px;word-break:break-all">${displayVal}</td></tr>`;
+      }
+      otherHtml += '</table></div>';
+    }
+    otherHtml += `<div style="margin-top:8px;font-size:12px;color:var(--muted)">📁 ${data.path}</div>`;
+    otherEl.innerHTML = otherHtml;
+
+    // try to guess which config matches
+    if (env) {
+      for (const c of configs) {
+        try {
+          const cd = await api("GET", `api/configs/${c.name}`);
+          if (cd.content && cd.content.env && JSON.stringify(cd.content.env) === JSON.stringify(env)) {
+            currentName = c.name;
+            break;
+          }
+        } catch {}
+      }
+    }
+    renderSidebar();
+  } catch (e) {
+    document.getElementById("currentInfo").textContent = "读取失败: " + e.message;
+  }
+}
+
+function renderSidebar() {
+  const el = document.getElementById("configList");
+  let html = "";
+  for (const c of configs) {
+    const active = c.name === currentName ? ' active' : '';
+    html += `<div class="config-item${active}" data-name="${c.name}" onclick="selectConfig('${c.name}')">
+      <span class="name">${c.name}${c.name === currentName ? ' ⬅️' : ''}</span>
+      <span class="actions">
+        <button onclick="event.stopPropagation();selectConfig('${c.name}')" title="编辑">✏️</button>
+        <button class="btn-del" onclick="event.stopPropagation();deleteConfig('${c.name}')" title="删除">🗑️</button>
+      </span>
+    </div>`;
+  }
+  el.innerHTML = html;
+}
+
+// --- Select / Preview ---
+async function selectConfig(name) {
+  currentName = name;
+  editing = false; isDirty = false;
+  try {
+    const data = await api("GET", `api/configs/${name}`);
+    document.getElementById("fileName").textContent = name;
+    const editor = document.getElementById("editor");
+    editor.value = JSON.stringify(data.content, null, 2);
+    editor.readOnly = false;
+    document.getElementById("btnSwitch").style.display = "inline-block";
+    document.getElementById("btnSave").style.display = "none";
+    document.getElementById("jsonError").classList.remove("show");
+    renderSidebar();
+  } catch (e) {
+    toast(e.message, "error");
+  }
+}
+
+// --- Switch ---
+let switchingName = null;
+function confirmSwitch() {
+  if (!currentName) return;
+  switchingName = currentName;
+  document.getElementById("confirmMsg").textContent =
+    `确定切换到「${currentName}」吗？当前 ~/.claude/settings.json 将自动备份。`;
+  document.getElementById("confirmModal").classList.add("show");
+}
+
+function closeModal() {
+  document.getElementById("confirmModal").classList.remove("show");
+}
+
+async function doSwitch() {
+  const btn = document.getElementById("confirmBtn");
+  btn.disabled = true; btn.textContent = "切换中...";
+  try {
+    await api("POST", "api/switch", { name: switchingName });
+    toast(`✅ 已切换为 ${switchingName}`, "success");
+    closeModal();
+    await loadCurrent();
+  } catch (e) {
+    toast(`❌ ${e.message}`, "error");
+  }
+  btn.disabled = false; btn.textContent = "确认切换";
+}
+
+// --- Edit (inline) ---
+document.getElementById("editor").addEventListener("input", function () {
+  if (!currentName) return;
+  editing = true;
+  isDirty = true;
+  document.getElementById("btnSwitch").style.display = "none";
+  document.getElementById("btnSave").style.display = "inline-block";
+  // validate
+  const errEl = document.getElementById("jsonError");
+  try {
+    JSON.parse(this.value);
+    errEl.classList.remove("show");
+  } catch {
+    errEl.classList.add("show");
+  }
+});
+
+async function saveConfig() {
+  if (!currentName) return;
+  const val = document.getElementById("editor").value;
+  try {
+    const content = JSON.parse(val);
+    await api("PUT", `api/configs/${currentName}`, { content });
+    toast("💾 保存成功", "success");
+    editing = false; isDirty = false;
+    document.getElementById("btnSwitch").style.display = "inline-block";
+    document.getElementById("btnSave").style.display = "none";
+    await loadConfigs();
+  } catch (e) {
+    if (e instanceof SyntaxError) {
+      document.getElementById("jsonError").classList.add("show");
+      toast("JSON 格式错误，无法保存", "error");
+    } else {
+      toast(e.message, "error");
+    }
+  }
+}
+
+// --- Delete ---
+async function deleteConfig(name) {
+  if (!confirm(`确定删除「${name}」吗？`)) return;
+  try {
+    await api("DELETE", `api/configs/${name}`);
+    toast(`已删除 ${name}`, "info");
+    if (currentName === name) {
+      currentName = null;
+      document.getElementById("fileName").textContent = "选择一个配置";
+      document.getElementById("editor").value = "";
+      document.getElementById("editor").readOnly = true;
+      document.getElementById("btnSwitch").style.display = "none";
+      document.getElementById("btnSave").style.display = "none";
+    }
+    await loadConfigs();
+  } catch (e) {
+    toast(e.message, "error");
+  }
+}
+
+// --- New ---
+function openNewConfig() {
+  document.getElementById("newModal").classList.add("show");
+  document.getElementById("newConfigName").value = "";
+  document.getElementById("newConfigContent").value =
+    '{\n  "env": {\n    "ANTHROPIC_AUTH_TOKEN": "",\n    "ANTHROPIC_BASE_URL": "",\n    "ANTHROPIC_MODEL": ""\n  }\n}';
+  document.getElementById("newJsonError").classList.remove("show");
+}
+
+function closeNewModal() {
+  document.getElementById("newModal").classList.remove("show");
+}
+
+async function createConfig() {
+  const name = document.getElementById("newConfigName").value.trim();
+  const raw = document.getElementById("newConfigContent").value;
+  const errEl = document.getElementById("newJsonError");
+
+  if (!name) { toast("请输入文件名", "error"); return; }
+  try {
+    const content = JSON.parse(raw);
+    await api("POST", "api/configs", { name, content });
+    toast(`✅ 创建成功: ${name}`, "success");
+    closeNewModal();
+    await loadConfigs();
+    selectConfig(name.endsWith(".json") ? name : name + ".json");
+  } catch (e) {
+    if (e instanceof SyntaxError) {
+      errEl.textContent = "JSON 格式错误: " + e.message;
+      errEl.classList.add("show");
+    } else {
+      toast(e.message, "error");
+    }
+  }
+}
+
+// --- Init ---
+loadAll();
+</script>
+</body>
+</html>
