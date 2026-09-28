@@ -30,6 +30,7 @@ python3 app.py
 ```
 
 - Set the access password via the `DD_SWITCH_PASSWORD` env var (defaults to `admin`)
+  > **Deployment note:** always set `DD_SWITCH_PASSWORD` in production — without it, the UI falls back to the default password `admin`.
 - Production mode serves via waitress; `DD_SWITCH_DEBUG=1` falls back to Flask's dev server
 - Browse / create / edit / delete / switch configs under `config/` right from the page
 - Same switch semantics as the CLI script — both can be used interchangeably
@@ -70,14 +71,14 @@ More optional fields: [Claude Code environment variables](https://docs.anthropic
 | **Select** | Interactive menu to pick a config |
 | **Preview** | Prints the full selected file before switching |
 | **Confirm** | Switches only after explicit confirmation |
-| **Back up** | Backs up the current config to `settings.json.bak.<timestamp>` |
+| **Back up** | Web UI backs up the current config to `settings.json.bak.<timestamp>` before switching; the CLI script overwrites directly |
 | **Merge** | Replaces only `env`, preserving `theme` / `permissions` / `actions` / `skills` |
 | **Atomic write** | Temp file + `mv rename` — no half-written JSON |
 
 ## Dependencies
 
 - `bash` 4.0+ (`mapfile` support)
-- `jq` (JSON validation & merge)
+- `jq` (required — JSON validation & merge)
 
 Install `jq`:
 

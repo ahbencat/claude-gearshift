@@ -30,6 +30,7 @@ python3 app.py
 ```
 
 - 访问密码通过环境变量 `DD_SWITCH_PASSWORD` 设置（不设则默认 `admin`）
+  > **部署提醒：** 生产环境务必设置 `DD_SWITCH_PASSWORD`，否则会回退到默认密码 `admin`。
 - 生产模式 waitress；`DD_SWITCH_DEBUG=1` 时走 Flask dev server
 - 页面可直接查看 / 新建 / 编辑 / 删除 / 切换 `config/` 下的配置
 - 切换逻辑与终端脚本一致，两种方式可混用
@@ -70,14 +71,14 @@ config/
 | **选择** | 交互菜单选择要切换的配置 |
 | **预览** | 切换前展示选中文件的完整内容 |
 | **确认** | 确认后才执行切换 |
-| **备份** | 自动备份原配置到 `settings.json.bak.时间戳` |
+| **备份** | Web UI 切换前自动备份原配置到 `settings.json.bak.<时间戳>`；终端脚本直接覆盖，不备份 |
 | **合并** | 只替换 `env`（模型配置），保留 `theme` / `permissions` / `actions` / `skills` 等其他字段 |
 | **原子写入** | 临时文件 → `mv rename`，避免半写导致 JSON 损坏 |
 
 ## 依赖
 
 - `bash` 4.0+（`mapfile` 支持）
-- `jq`（JSON 校验与合并）
+- `jq`（必需，JSON 校验与合并）
 
 安装 `jq`：
 
