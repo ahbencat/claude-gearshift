@@ -1,10 +1,10 @@
-# claude-gearshift
+# ⚙️ claude-gearshift
 
 **English | [简体中文](README.zh-CN.md)**
 
 Shift gears for Claude Code — quickly switch model/provider configs on Linux while leaving every other setting untouched.
 
-Two ways to use it, sharing the same `config/` directory and the same switch semantics (back up → replace `env` only → atomic write):
+Two ways to use it, sharing the same `config/` directory and the same switch semantics (replace `env` only → atomic write):
 
 | Mode | Path | Description |
 |---|---|---|
@@ -29,10 +29,13 @@ python3 app.py
 # open http://localhost:10086
 ```
 
+Requires `flask` + `waitress` — `pip install flask waitress`.
+
 - Set the access password via the `DD_SWITCH_PASSWORD` env var (defaults to `admin`)
   > **Deployment note:** always set `DD_SWITCH_PASSWORD` in production — without it, the UI falls back to the default password `admin`.
 - Production mode serves via waitress; `DD_SWITCH_DEBUG=1` falls back to Flask's dev server
 - Browse / create / edit / delete / switch configs under `config/` right from the page
+- 中/EN language toggle in the top-right corner (your choice is remembered)
 - Same switch semantics as the CLI script — both can be used interchangeably
 
 ## Config Directory Structure
@@ -107,25 +110,25 @@ cp ~/.claude/settings.json config/cf_default.json
 
 ```
 ════════════════════════════════════════════
- JSON validation results
+ JSON 文件校验结果 / JSON Validation Results
 ════════════════════════════════════════════
 
-  ✅ Valid files: 3
+  ✅ 有效文件: 3 个 / Valid files: 3
 
 ════════════════════════════════════════════
- Current config
+ 当前配置 / Current Config
 ════════════════════════════════════════════
-   Path: /home/user/settings.json
+   路径 / Path: /home/user/settings.json
    Base URL: https://ark.cn-beijing.volces.com/api/coding
    Model:    deepseek-v4-flash
 
 ════════════════════════════════════════════
- Select a config file:
+ 请选择要切换的配置文件 / Select a config file:
 ════════════════════════════════════════════
 
 1) config/cf_anthropic.json
 2) config/cf_ark_177.json
 3) config/cf_openrouter.json
 
-Enter a number (or 0 to quit):
+请输入编号 (或 0 退出) / Enter a number (or 0 to quit):
 ```

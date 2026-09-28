@@ -1,10 +1,10 @@
-# claude-gearshift
+# ⚙️ claude-gearshift
 
 **[English](README.md) | 简体中文**
 
 给 Claude Code 换挡 —— 在 Linux 上快速切换模型/供应商配置，保留其他设置不变。
 
-提供两种使用方式，共用同一个 `config/` 目录和同一套切换逻辑（备份 → 只替换 `env` → 原子写入）：
+提供两种使用方式，共用同一个 `config/` 目录和同一套切换逻辑（只替换 `env` → 原子写入）：
 
 | 方式 | 路径 | 说明 |
 |---|---|---|
@@ -29,10 +29,13 @@ python3 app.py
 # 打开 http://localhost:10086
 ```
 
+需要 `flask` + `waitress`（`pip install flask waitress`）。
+
 - 访问密码通过环境变量 `DD_SWITCH_PASSWORD` 设置（不设则默认 `admin`）
   > **部署提醒：** 生产环境务必设置 `DD_SWITCH_PASSWORD`，否则会回退到默认密码 `admin`。
 - 生产模式 waitress；`DD_SWITCH_DEBUG=1` 时走 Flask dev server
 - 页面可直接查看 / 新建 / 编辑 / 删除 / 切换 `config/` 下的配置
+- 右上角 中/EN 语言切换（记忆选择）
 - 切换逻辑与终端脚本一致，两种方式可混用
 
 ## 配置目录结构
@@ -107,25 +110,25 @@ cp ~/.claude/settings.json config/cf_default.json
 
 ```
 ════════════════════════════════════════════
- JSON 文件校验结果
+ JSON 文件校验结果 / JSON Validation Results
 ════════════════════════════════════════════
 
-  ✅ 有效文件: 3 个
+  ✅ 有效文件: 3 个 / Valid files: 3
 
 ════════════════════════════════════════════
- 当前配置
+ 当前配置 / Current Config
 ════════════════════════════════════════════
-   路径: /home/user/settings.json
+   路径 / Path: /home/user/settings.json
    Base URL: https://ark.cn-beijing.volces.com/api/coding
    Model:    deepseek-v4-flash
 
 ════════════════════════════════════════════
- 请选择要切换的配置文件:
+ 请选择要切换的配置文件 / Select a config file:
 ════════════════════════════════════════════
 
 1) config/cf_anthropic.json
 2) config/cf_ark_177.json
 3) config/cf_openrouter.json
 
-请输入编号 (或 0 退出):
+请输入编号 (或 0 退出) / Enter a number (or 0 to quit):
 ```
