@@ -38,6 +38,27 @@ Requires `flask` + `waitress` — `pip install flask waitress`.
 - 中/EN language toggle in the top-right corner (your choice is remembered)
 - Same switch semantics as the CLI script — both can be used interchangeably
 
+### 🔒 Password Protection
+
+The Web UI is **password-protected end to end** — every page and every API endpoint requires a valid login session:
+
+| Layer | Behavior |
+|---|---|
+| **Login** | Password comes from `DD_SWITCH_PASSWORD` (default `admin` — always override it in production) |
+| **Session** | Server-side token stored in an `HttpOnly` cookie, 8-hour expiry, `SameSite=Lax` |
+| **Coverage** | Unauthenticated page visits redirect to the login screen; unauthenticated API calls return `401` + `login_required` |
+| **Cache safety** | All responses carry `no-store` headers — config contents never linger in the browser cache |
+| **Token masking** | API tokens shown in the UI are truncated (`sk-ant-api03...`), never rendered in full |
+| **Logout** | The Log out button invalidates the session server-side immediately |
+
+![Login screen](assets/login-en.png)
+
+### Screenshots
+
+| Dashboard | Confirm switch |
+|---|---|
+| ![Dashboard](assets/dashboard-en.png) | ![Confirm switch](assets/confirm-en.png) |
+
 ## Config Directory Structure
 
 Drop one JSON file per provider into `config/`:

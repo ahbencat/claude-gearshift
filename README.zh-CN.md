@@ -38,6 +38,27 @@ python3 app.py
 - 右上角 中/EN 语言切换（记忆选择）
 - 切换逻辑与终端脚本一致，两种方式可混用
 
+### 🔒 密码保护
+
+Web UI **全程密码保护** —— 每个页面、每个 API 接口都必须持有有效的登录会话：
+
+| 层 | 行为 |
+|---|---|
+| **登录** | 密码来自 `DD_SWITCH_PASSWORD`（默认 `admin` —— 生产环境务必覆盖） |
+| **会话** | 服务端 token 存于 `HttpOnly` cookie，8 小时过期，`SameSite=Lax` |
+| **覆盖范围** | 未登录访问页面 → 跳转登录页；未登录调用 API → 返回 `401` + `login_required` |
+| **缓存安全** | 所有响应带 `no-store` 头 —— 配置内容不会滞留在浏览器缓存 |
+| **token 脱敏** | 界面上显示的 API token 一律截断（`sk-ant-api03...`），从不完整渲染 |
+| **登出** | 点击退出登录立即在服务端作废会话 |
+
+![登录页](assets/login-zh.png)
+
+### 截图
+
+| 主面板 | 切换确认 |
+|---|---|
+| ![主面板](assets/dashboard-zh.png) | ![切换确认](assets/confirm-en.png) |
+
 ## 配置目录结构
 
 将各份 Claude Code 配置 JSON 文件放入 `config/` 目录：

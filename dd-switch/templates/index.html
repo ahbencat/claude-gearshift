@@ -172,7 +172,7 @@
 
     <div class="preview-area">
       <div class="toolbar">
-        <span class="file-name" id="fileName" data-i18n="selectConfig">选择一个配置</span>
+        <span class="file-name" id="fileName">选择一个配置</span>
         <div style="display:flex;gap:6px">
           <button class="btn btn-sm btn-success" id="btnSwitch" onclick="confirmSwitch()" style="display:none" data-i18n="switchTo">🔄 切换到此配置</button>
           <button class="btn btn-sm" id="btnSave" onclick="saveConfig()" style="display:none" data-i18n="save">💾 保存</button>
@@ -222,6 +222,8 @@ let isDirty = false;
 
 // Re-render dynamic content after a language switch / 切换语言后重绘动态内容
 function onLangChange() {
+  // fileName holds a real file name once selected — only reset when empty
+  if (!currentName) document.getElementById("fileName").textContent = t("selectConfig");
   loadAll();
 }
 
@@ -505,6 +507,7 @@ async function createConfig() {
 }
 
 // --- Init ---
+document.getElementById("fileName").textContent = t("selectConfig");
 loadAll();
 </script>
 </body>
