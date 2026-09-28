@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>dd-switch - Claude Code 配置切换</title>
+<title>dd-switch</title>
 <style>
   :root {
     --bg: #1a1b2e; --surface: #232540; --card: #2a2d4a;
@@ -132,15 +132,21 @@
   ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  .lang-toggle {
+    padding: 4px 12px; border-radius: var(--radius);
+    border: 1px solid var(--border); background: transparent; color: var(--text);
+    font-size: 12px; cursor: pointer;
+  }
 </style>
 </head>
 <body>
 <header>
   <h1>🔀 dd-switch</h1>
-  <span>Claude Code 配置切换面板</span>
-  <span class="badge badge-ok" id="countBadge">0 个配置</span>
+  <span data-i18n="subtitle">Claude Code 配置切换面板</span>
+  <span class="badge badge-ok" id="countBadge">0</span>
   <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
-    <a href="logout" class="btn btn-sm" style="text-decoration:none">退出登录</a>
+    <button class="lang-toggle" id="langToggle" onclick="I18N.toggleLang()">EN</button>
+    <a href="logout" class="btn btn-sm" style="text-decoration:none" data-i18n="logout">退出登录</a>
   </div>
 </header>
 
@@ -148,32 +154,32 @@
   <!-- sidebar -->
   <div class="sidebar">
     <div class="sidebar-header">
-      <h2>配置文件</h2>
-      <button class="btn btn-sm btn-primary" onclick="openNewConfig()">+ 新增</button>
+      <h2 data-i18n="configFiles">配置文件</h2>
+      <button class="btn btn-sm btn-primary" onclick="openNewConfig()" data-i18n="addNew">+ 新增</button>
     </div>
     <div class="config-list" id="configList">
-      <div class="empty">加载中...</div>
+      <div class="empty" data-i18n="loading">加载中...</div>
     </div>
   </div>
 
   <!-- main -->
   <div class="main">
     <div class="current-card" id="currentCard">
-      <h3>当前使用中的配置</h3>
-      <div id="currentInfo">加载中...</div>
+      <h3 data-i18n="currentConfig">当前使用中的配置</h3>
+      <div id="currentInfo" data-i18n="loading">加载中...</div>
       <div id="currentOtherFields"></div>
     </div>
 
     <div class="preview-area">
       <div class="toolbar">
-        <span class="file-name" id="fileName">选择一个配置</span>
+        <span class="file-name" id="fileName" data-i18n="selectConfig">选择一个配置</span>
         <div style="display:flex;gap:6px">
-          <button class="btn btn-sm btn-success" id="btnSwitch" onclick="confirmSwitch()" style="display:none">🔄 切换到此配置</button>
-          <button class="btn btn-sm" id="btnSave" onclick="saveConfig()" style="display:none">💾 保存</button>
+          <button class="btn btn-sm btn-success" id="btnSwitch" onclick="confirmSwitch()" style="display:none" data-i18n="switchTo">🔄 切换到此配置</button>
+          <button class="btn btn-sm" id="btnSave" onclick="saveConfig()" style="display:none" data-i18n="save">💾 保存</button>
         </div>
       </div>
-      <textarea id="editor" placeholder="选择左侧配置查看内容..." readonly></textarea>
-      <div class="json-error" id="jsonError">JSON 格式错误</div>
+      <textarea id="editor" data-i18n-placeholder="selectHint" placeholder="选择左侧配置查看内容..." readonly></textarea>
+      <div class="json-error" id="jsonError" data-i18n="jsonError">JSON 格式错误</div>
     </div>
   </div>
 </div>
@@ -181,11 +187,11 @@
 <!-- confirm modal -->
 <div class="modal-overlay" id="confirmModal">
   <div class="modal">
-    <h3>确认切换配置</h3>
-    <p id="confirmMsg">确定要切换到该配置吗？当前配置将自动备份。</p>
+    <h3 data-i18n="confirmSwitch">确认切换配置</h3>
+    <p id="confirmMsg"></p>
     <div class="btns">
-      <button class="btn" onclick="closeModal()">取消</button>
-      <button class="btn btn-primary" onclick="doSwitch()" id="confirmBtn">确认切换</button>
+      <button class="btn" onclick="closeModal()" data-i18n="cancel">取消</button>
+      <button class="btn btn-primary" onclick="doSwitch()" id="confirmBtn" data-i18n="confirmBtn">确认切换</button>
     </div>
   </div>
 </div>
@@ -193,13 +199,13 @@
 <!-- new config modal -->
 <div class="modal-overlay" id="newModal">
   <div class="modal">
-    <h3>新增配置</h3>
-    <input type="text" id="newConfigName" placeholder="文件名（如 my_provider.json）" />
-    <textarea id="newConfigContent" rows="8" style="width:100%;background:#13142a;color:#c9d1d9;border:1px solid var(--border);border-radius:var(--radius);padding:10px;font-family:monospace;font-size:13px;resize:vertical" placeholder='{"env":{"ANTHROPIC_BASE_URL":"...","ANTHROPIC_MODEL":"..."}}'></textarea>
-    <div class="json-error" id="newJsonError" style="margin:4px 0 8px">JSON 格式错误</div>
+    <h3 data-i18n="newConfig">新增配置</h3>
+    <input type="text" id="newConfigName" data-i18n-placeholder="fileNamePlaceholder" placeholder="文件名（如 my_provider.json）" />
+    <textarea id="newConfigContent" rows="8" style="width:100%;background:#13142a;color:#c9d1d9;border:1px solid var(--border);border-radius:var(--radius);padding:10px;font-family:monospace;font-size:13px;resize:vertical" data-i18n-placeholder="newConfigPlaceholder" placeholder='{"env":{"ANTHROPIC_BASE_URL":"...","ANTHROPIC_MODEL":"..."}}'></textarea>
+    <div class="json-error" id="newJsonError" style="margin:4px 0 8px" data-i18n="jsonError">JSON 格式错误</div>
     <div class="btns">
-      <button class="btn" onclick="closeNewModal()">取消</button>
-      <button class="btn btn-primary" onclick="createConfig()">创建</button>
+      <button class="btn" onclick="closeNewModal()" data-i18n="cancel">取消</button>
+      <button class="btn btn-primary" onclick="createConfig()" data-i18n="create">创建</button>
     </div>
   </div>
 </div>
@@ -207,11 +213,17 @@
 <!-- toast -->
 <div class="toast" id="toast"></div>
 
+<script src="static/i18n.js"></script>
 <script>
 let configs = [];
 let currentName = null;
 let editing = false;
 let isDirty = false;
+
+// Re-render dynamic content after a language switch / 切换语言后重绘动态内容
+function onLangChange() {
+  loadAll();
+}
 
 // --- Toast ---
 function toast(msg, type = "info") {
@@ -232,9 +244,9 @@ async function api(method, path, body) {
   const data = await r.json();
   if (data.login_required) {
     window.location.href = "login";
-    throw new Error("登录已过期");
+    throw new Error(t("loginExpired"));
   }
-  if (!r.ok) throw new Error(data.error || "请求失败");
+  if (!r.ok) throw new Error(translateError(data.error) || t("requestFailed"));
   return data;
 }
 
@@ -251,8 +263,8 @@ async function loadConfigs() {
   const invalids = data.invalid || [];
 
   if (configs.length === 0 && invalids.length === 0) {
-    el.innerHTML = '<div class="empty">暂无配置文件<br/>点击右上角"新增"创建</div>';
-    badge.textContent = "0 个配置";
+    el.innerHTML = `<div class="empty">${t("noConfigs")}<br/>${t("noConfigsHint")}</div>`;
+    badge.textContent = t("configsUnit", 0);
     return;
   }
 
@@ -262,18 +274,22 @@ async function loadConfigs() {
     html += `<div class="config-item${active}" data-name="${c.name}" onclick="selectConfig('${c.name}')">
       <span class="name">${c.name}</span>
       <span class="actions">
-        <button onclick="event.stopPropagation();selectConfig('${c.name}')" title="编辑">✏️</button>
-        <button class="btn-del" onclick="event.stopPropagation();deleteConfig('${c.name}')" title="删除">🗑️</button>
+        <button onclick="event.stopPropagation();selectConfig('${c.name}')" data-i18n-title="edit" title="编辑">✏️</button>
+        <button class="btn-del" onclick="event.stopPropagation();deleteConfig('${c.name}')" data-i18n-title="delete" title="删除">🗑️</button>
       </span>
     </div>`;
   }
   for (const c of invalids) {
     html += `<div class="config-item" style="opacity:.5;cursor:default">
-      <span class="name">${c.name} <span class="badge badge-err">无效</span></span>
+      <span class="name">${c.name} <span class="badge badge-err">${t("invalid")}</span></span>
     </div>`;
   }
   el.innerHTML = html;
-  badge.textContent = `${configs.length} 个配置`;
+  badge.textContent = t("configsUnit", configs.length);
+  // re-apply title translations on the freshly injected nodes
+  el.querySelectorAll("[data-i18n-title]").forEach((n) => {
+    n.setAttribute("title", t(n.getAttribute("data-i18n-title")));
+  });
 }
 
 async function loadCurrent() {
@@ -282,7 +298,7 @@ async function loadCurrent() {
     const el = document.getElementById("currentInfo");
     const otherEl = document.getElementById("currentOtherFields");
     if (!data.exists) {
-      el.innerHTML = '<span style="color:var(--warning)">尚未创建 settings.json</span>';
+      el.innerHTML = `<span style="color:var(--warning)">${t("notCreated")}</span>`;
       otherEl.innerHTML = "";
       return;
     }
@@ -302,7 +318,7 @@ async function loadCurrent() {
 
     let otherHtml = "";
     if (Object.keys(other).length > 0) {
-      otherHtml = '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)"><h3 style="font-size:13px;font-weight:600;color:var(--muted);margin-bottom:4px">其他字段</h3><table style="width:100%;font-size:13px;border-collapse:collapse">';
+      otherHtml = `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)"><h3 style="font-size:13px;font-weight:600;color:var(--muted);margin-bottom:4px">${t("otherFields")}</h3><table style="width:100%;font-size:13px;border-collapse:collapse">`;
       for (const [key, val] of Object.entries(other)) {
         const displayVal = typeof val === 'object' ? JSON.stringify(val) : String(val);
         otherHtml += `<tr style="border-bottom:1px solid var(--border)"><td style="padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap;width:1%">${key}</td><td style="padding:4px 0;font-family:monospace;font-size:12px;word-break:break-all">${displayVal}</td></tr>`;
@@ -326,7 +342,7 @@ async function loadCurrent() {
     }
     renderSidebar();
   } catch (e) {
-    document.getElementById("currentInfo").textContent = "读取失败: " + e.message;
+    document.getElementById("currentInfo").textContent = `${t("readFailed")}: ${translateError(e.message)}`;
   }
 }
 
@@ -338,12 +354,15 @@ function renderSidebar() {
     html += `<div class="config-item${active}" data-name="${c.name}" onclick="selectConfig('${c.name}')">
       <span class="name">${c.name}${c.name === currentName ? ' ⬅️' : ''}</span>
       <span class="actions">
-        <button onclick="event.stopPropagation();selectConfig('${c.name}')" title="编辑">✏️</button>
-        <button class="btn-del" onclick="event.stopPropagation();deleteConfig('${c.name}')" title="删除">🗑️</button>
+        <button onclick="event.stopPropagation();selectConfig('${c.name}')" data-i18n-title="edit" title="编辑">✏️</button>
+        <button class="btn-del" onclick="event.stopPropagation();deleteConfig('${c.name}')" data-i18n-title="delete" title="删除">🗑️</button>
       </span>
     </div>`;
   }
   el.innerHTML = html;
+  el.querySelectorAll("[data-i18n-title]").forEach((n) => {
+    n.setAttribute("title", t(n.getAttribute("data-i18n-title")));
+  });
 }
 
 // --- Select / Preview ---
@@ -361,7 +380,7 @@ async function selectConfig(name) {
     document.getElementById("jsonError").classList.remove("show");
     renderSidebar();
   } catch (e) {
-    toast(e.message, "error");
+    toast(translateError(e.message), "error");
   }
 }
 
@@ -370,8 +389,7 @@ let switchingName = null;
 function confirmSwitch() {
   if (!currentName) return;
   switchingName = currentName;
-  document.getElementById("confirmMsg").textContent =
-    `确定切换到「${currentName}」吗？当前 ~/.claude/settings.json 将自动备份。`;
+  document.getElementById("confirmMsg").textContent = t("confirmMsg", currentName);
   document.getElementById("confirmModal").classList.add("show");
 }
 
@@ -381,16 +399,16 @@ function closeModal() {
 
 async function doSwitch() {
   const btn = document.getElementById("confirmBtn");
-  btn.disabled = true; btn.textContent = "切换中...";
+  btn.disabled = true; btn.textContent = t("switching");
   try {
     await api("POST", "api/switch", { name: switchingName });
-    toast(`✅ 已切换为 ${switchingName}`, "success");
+    toast(t("switchedTo", switchingName), "success");
     closeModal();
     await loadCurrent();
   } catch (e) {
-    toast(`❌ ${e.message}`, "error");
+    toast(`❌ ${translateError(e.message)}`, "error");
   }
-  btn.disabled = false; btn.textContent = "确认切换";
+  btn.disabled = false; btn.textContent = t("confirmBtn");
 }
 
 // --- Edit (inline) ---
@@ -416,7 +434,7 @@ async function saveConfig() {
   try {
     const content = JSON.parse(val);
     await api("PUT", `api/configs/${currentName}`, { content });
-    toast("💾 保存成功", "success");
+    toast(t("saveSuccess"), "success");
     editing = false; isDirty = false;
     document.getElementById("btnSwitch").style.display = "inline-block";
     document.getElementById("btnSave").style.display = "none";
@@ -424,22 +442,22 @@ async function saveConfig() {
   } catch (e) {
     if (e instanceof SyntaxError) {
       document.getElementById("jsonError").classList.add("show");
-      toast("JSON 格式错误，无法保存", "error");
+      toast(t("saveJsonError"), "error");
     } else {
-      toast(e.message, "error");
+      toast(translateError(e.message), "error");
     }
   }
 }
 
 // --- Delete ---
 async function deleteConfig(name) {
-  if (!confirm(`确定删除「${name}」吗？`)) return;
+  if (!confirm(t("confirmDelete", name))) return;
   try {
     await api("DELETE", `api/configs/${name}`);
-    toast(`已删除 ${name}`, "info");
+    toast(t("deleted", name), "info");
     if (currentName === name) {
       currentName = null;
-      document.getElementById("fileName").textContent = "选择一个配置";
+      document.getElementById("fileName").textContent = t("selectConfig");
       document.getElementById("editor").value = "";
       document.getElementById("editor").readOnly = true;
       document.getElementById("btnSwitch").style.display = "none";
@@ -447,7 +465,7 @@ async function deleteConfig(name) {
     }
     await loadConfigs();
   } catch (e) {
-    toast(e.message, "error");
+    toast(translateError(e.message), "error");
   }
 }
 
@@ -455,8 +473,7 @@ async function deleteConfig(name) {
 function openNewConfig() {
   document.getElementById("newModal").classList.add("show");
   document.getElementById("newConfigName").value = "";
-  document.getElementById("newConfigContent").value =
-    '{\n  "env": {\n    "ANTHROPIC_AUTH_TOKEN": "",\n    "ANTHROPIC_BASE_URL": "",\n    "ANTHROPIC_MODEL": ""\n  }\n}';
+  document.getElementById("newConfigContent").value = t("newConfigPlaceholder");
   document.getElementById("newJsonError").classList.remove("show");
 }
 
@@ -469,20 +486,20 @@ async function createConfig() {
   const raw = document.getElementById("newConfigContent").value;
   const errEl = document.getElementById("newJsonError");
 
-  if (!name) { toast("请输入文件名", "error"); return; }
+  if (!name) { toast(t("enterFileName"), "error"); return; }
   try {
     const content = JSON.parse(raw);
     await api("POST", "api/configs", { name, content });
-    toast(`✅ 创建成功: ${name}`, "success");
+    toast(t("createSuccess", name), "success");
     closeNewModal();
     await loadConfigs();
     selectConfig(name.endsWith(".json") ? name : name + ".json");
   } catch (e) {
     if (e instanceof SyntaxError) {
-      errEl.textContent = "JSON 格式错误: " + e.message;
+      errEl.textContent = `${t("jsonErrorPrefix")}: ${e.message}`;
       errEl.classList.add("show");
     } else {
-      toast(e.message, "error");
+      toast(translateError(e.message), "error");
     }
   }
 }

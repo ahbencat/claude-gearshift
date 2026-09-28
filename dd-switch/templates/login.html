@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>dd-switch - 验证</title>
+<title>dd-switch</title>
 <style>
   :root {
     --bg: #1a1b2e; --surface: #232540; --card: #2a2d4a;
@@ -37,17 +37,25 @@
   }
   .login-box button:hover { background: var(--accent-hover); }
   .error { color: var(--danger); font-size: 13px; text-align: center; margin-top: 12px; min-height: 18px; }
+  .lang-toggle {
+    position: fixed; top: 16px; right: 16px;
+    padding: 4px 12px; border-radius: var(--radius);
+    border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    font-size: 12px; cursor: pointer;
+  }
 </style>
 </head>
 <body>
+  <button class="lang-toggle" id="langToggle" onclick="I18N.toggleLang()">EN</button>
   <div class="login-box">
     <h1>dd-switch</h1>
-    <p>请输入密码继续</p>
+    <p data-i18n="loginPrompt">请输入密码继续</p>
     <form method="post" id="loginForm">
-      <input type="password" id="passwordInput" name="password" placeholder="密码" autofocus>
-      <button type="submit">验证</button>
+      <input type="password" id="passwordInput" name="password" data-i18n-placeholder="passwordPlaceholder" placeholder="密码" autofocus>
+      <button type="submit" data-i18n="loginBtn">验证</button>
     </form>
-    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+    {% if error %}<div class="error" id="loginError">{{ error }}</div>{% endif %}
   </div>
+  <script src="static/i18n.js"></script>
 </body>
 </html>
