@@ -3,8 +3,8 @@
 (function () {
   const I18N = {
     zh: {
-      title: "dd-switch - Claude Code 配置切换",
-      loginTitle: "dd-switch - 验证",
+      title: "Claude-GearShift - Claude Code 配置切换",
+      loginTitle: "Claude-GearShift - 验证",
       subtitle: "Claude Code 配置切换面板",
       configsUnit: (n) => `${n} 个配置`,
       logout: "退出登录",
@@ -59,8 +59,8 @@
       errSwitchFailed: (msg) => `切换失败: ${msg}`,
     },
     en: {
-      title: "dd-switch - Claude Code Config Switcher",
-      loginTitle: "dd-switch - Login",
+      title: "Claude-GearShift - Claude Code Config Switcher",
+      loginTitle: "Claude-GearShift - Login",
       subtitle: "Claude Code Config Switcher Panel",
       configsUnit: (n) => `${n} config${n === 1 ? "" : "s"}`,
       logout: "Log out",

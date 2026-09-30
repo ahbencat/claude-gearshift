@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""dd-switch: Web UI for switching Claude Code configurations."""
+"""claude-gearshift Web UI: switch Claude Code configurations from the browser."""
 
 import json
 import os
@@ -336,7 +336,7 @@ def api_switch():
 
 
 if __name__ == "__main__":
-    print(f"dd-switch 启动在 http://0.0.0.0:10086")
+    print(f"claude-gearshift Web UI running at http://0.0.0.0:10086")
     print(f"配置目录: {CONFIG_DIR}")
     print(f"Claude 配置: {CLAUDE_CONFIG}")
     # 生产用 waitress；debug 模式下回退到 Flask 开发服务器
