@@ -137,6 +137,22 @@
     border: 1px solid var(--border); background: transparent; color: var(--text);
     font-size: 12px; cursor: pointer;
   }
+  .server-select {
+    padding: 6px 10px; border-radius: var(--radius);
+    border: 1px solid var(--border); background: #13142a; color: var(--text);
+    font-size: 12px; cursor: pointer; width: 100%;
+  }
+  .server-select:focus { outline: none; border-color: var(--accent); }
+  .server-badge {
+    font-size: 10px; padding: 1px 6px; border-radius: 999px; font-weight: 500;
+    background: rgba(99,102,241,.15); color: var(--accent);
+  }
+  .server-badge.remote {
+    background: rgba(34,197,94,.15); color: var(--success);
+  }
+  .server-badge.local {
+    background: rgba(136,140,173,.15); color: var(--muted);
+  }
 </style>
 </head>
 <body>
@@ -156,6 +172,12 @@
     <div class="sidebar-header">
       <h2 data-i18n="configFiles">配置文件</h2>
       <button class="btn btn-sm btn-primary" onclick="openNewConfig()" data-i18n="addNew">+ 新增</button>
+    </div>
+    <div style="padding:8px 12px;border-bottom:1px solid var(--border)">
+      <select class="server-select" id="serverSelect" onchange="onServerChange()" style="width:100%">
+        <option value="local" data-i18n="localServer">本地服务器</option>
+      </select>
+      <button class="btn btn-sm" onclick="openServerModal()" style="width:100%;margin-top:6px" data-i18n="manageServers">管理服务器</button>
     </div>
     <div class="config-list" id="configList">
       <div class="empty" data-i18n="loading">加载中...</div>
@@ -210,6 +232,29 @@
   </div>
 </div>
 
+<!-- server management modal -->
+<div class="modal-overlay" id="serverModal">
+  <div class="modal" style="max-width:600px">
+    <h3 data-i18n="manageServers">管理服务器</h3>
+    <div id="serverList" style="max-height:300px;overflow-y:auto;margin-bottom:12px"></div>
+    <div style="border-top:1px solid var(--border);padding-top:12px">
+      <h4 style="font-size:13px;margin-bottom:8px;color:var(--muted)" data-i18n="addServer">添加服务器</h4>
+      <input type="text" id="srvName" placeholder="名称" style="width:100%;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px;margin-bottom:8px" />
+      <input type="text" id="srvHost" placeholder="主机地址" style="width:100%;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px;margin-bottom:8px" />
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <input type="number" id="srvPort" placeholder="端口" value="22" style="width:80px;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px" />
+        <input type="text" id="srvUsername" placeholder="用户名" style="flex:1;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px" />
+      </div>
+      <input type="text" id="srvKeyPath" placeholder="SSH 密钥路径" style="width:100%;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px;margin-bottom:8px" />
+      <input type="password" id="srvPassphrase" placeholder="密钥密码短语（可选）" style="width:100%;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px;margin-bottom:12px" />
+      <div class="btns">
+        <button class="btn" onclick="closeServerModal()" data-i18n="close">关闭</button>
+        <button class="btn btn-primary" onclick="addServer()" data-i18n="add">添加</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- toast -->
 <div class="toast" id="toast"></div>
 
@@ -254,7 +299,11 @@ async function api(method, path, body) {
 
 // --- Load ---
 async function loadAll() {
-  await Promise.all([loadConfigs(), loadCurrent()]);
+  if (currentServer === "local") {
+    await Promise.all([loadConfigs(), loadCurrent()]);
+  } else {
+    await Promise.all([loadRemoteConfigs(currentServer), loadRemoteCurrent(currentServer)]);
+  }
 }
 
 async function loadConfigs() {
@@ -403,10 +452,16 @@ async function doSwitch() {
   const btn = document.getElementById("confirmBtn");
   btn.disabled = true; btn.textContent = t("switching");
   try {
-    await api("POST", "api/switch", { name: switchingName });
-    toast(t("switchedTo", switchingName), "success");
-    closeModal();
-    await loadCurrent();
+    if (currentServer === "local") {
+      await api("POST", "api/switch", { name: switchingName });
+      toast(t("switchedTo", switchingName), "success");
+      closeModal();
+      await loadCurrent();
+    } else {
+      const content = JSON.parse(document.getElementById("editor").value);
+      await doRemoteSwitch(currentServer, content);
+      closeModal();
+    }
   } catch (e) {
     toast(`❌ ${translateError(e.message)}`, "error");
   }
@@ -506,8 +561,176 @@ async function createConfig() {
   }
 }
 
+// --- Server Management ---
+let currentServer = "local";
+
+async function loadServers() {
+  try {
+    const data = await api("GET", "api/servers");
+    const select = document.getElementById("serverSelect");
+    // Keep local option, remove others
+    while (select.options.length > 1) select.remove(1);
+    for (const s of data.servers) {
+      const opt = document.createElement("option");
+      opt.value = s.name;
+      opt.textContent = `${s.name} (${s.host})`;
+      select.appendChild(opt);
+    }
+    select.value = currentServer;
+  } catch (e) {
+    console.error("加载服务器列表失败", e);
+  }
+}
+
+function onServerChange() {
+  currentServer = document.getElementById("serverSelect").value;
+  loadAll();
+}
+
+function openServerModal() {
+  document.getElementById("serverModal").classList.add("show");
+  loadServerList();
+}
+
+function closeServerModal() {
+  document.getElementById("serverModal").classList.remove("show");
+}
+
+async function loadServerList() {
+  try {
+    const data = await api("GET", "api/servers");
+    const el = document.getElementById("serverList");
+    if (data.servers.length === 0) {
+      el.innerHTML = '<div class="empty">暂无服务器</div>';
+      return;
+    }
+    let html = "";
+    for (const s of data.servers) {
+      html += `<div class="config-item" data-name="${s.name}">
+        <span class="name">${s.name} <span class="server-badge remote">${s.host}</span></span>
+        <span class="actions">
+          <button onclick="event.stopPropagation();testServer('${s.name}')" title="测试连接">🔌</button>
+          <button class="btn-del" onclick="event.stopPropagation();deleteServer('${s.name}')" title="删除">🗑️</button>
+        </span>
+      </div>`;
+    }
+    el.innerHTML = html;
+  } catch (e) {
+    toast(translateError(e.message), "error");
+  }
+}
+
+async function addServer() {
+  const name = document.getElementById("srvName").value.trim();
+  const host = document.getElementById("srvHost").value.trim();
+  const port = document.getElementById("srvPort").value;
+  const username = document.getElementById("srvUsername").value.trim();
+  const keyPath = document.getElementById("srvKeyPath").value.trim();
+  const passphrase = document.getElementById("srvPassphrase").value;
+
+  if (!name || !host || !username) {
+    toast("请填写名称、主机和用户名", "error");
+    return;
+  }
+
+  try {
+    await api("POST", "api/servers", { name, host, port, username, key_path: keyPath, passphrase });
+    toast("添加成功", "success");
+    document.getElementById("srvName").value = "";
+    document.getElementById("srvHost").value = "";
+    document.getElementById("srvUsername").value = "";
+    document.getElementById("srvKeyPath").value = "";
+    document.getElementById("srvPassphrase").value = "";
+    loadServerList();
+    loadServers();
+  } catch (e) {
+    toast(translateError(e.message), "error");
+  }
+}
+
+async function deleteServer(name) {
+  if (!confirm(`确定删除服务器「${name}」吗？`)) return;
+  try {
+    await api("DELETE", `api/servers/${name}`);
+    toast("已删除", "info");
+    loadServerList();
+    loadServers();
+  } catch (e) {
+    toast(translateError(e.message), "error");
+  }
+}
+
+async function testServer(name) {
+  try {
+    const data = await api("GET", `api/servers/${name}/test`);
+    toast(data.message, "success");
+  } catch (e) {
+    toast(translateError(e.message), "error");
+  }
+}
+
+// --- Remote Config Loading ---
+async function loadRemoteConfigs(serverName) {
+  try {
+    const data = await api("GET", `api/servers/${serverName}/configs`);
+    configs = data.configs || [];
+    renderSidebar();
+  } catch (e) {
+    toast(translateError(e.message), "error");
+  }
+}
+
+async function loadRemoteCurrent(serverName) {
+  try {
+    const data = await api("GET", `api/servers/${serverName}/current`);
+    const el = document.getElementById("currentInfo");
+    const otherEl = document.getElementById("currentOtherFields");
+    if (!data.exists) {
+      el.innerHTML = `<span style="color:var(--warning)">远程 settings.json 不存在</span>`;
+      otherEl.innerHTML = "";
+      return;
+    }
+    const env = data.env || {};
+    const other = data.other_fields || {};
+    let envHtml = '<table style="width:100%;font-size:13px;border-collapse:collapse">';
+    for (const [key, val] of Object.entries(env)) {
+      const displayVal = key === 'ANTHROPIC_AUTH_TOKEN' && val.length > 20
+        ? val.substring(0, 12) + '...'
+        : val;
+      envHtml += `<tr style="border-bottom:1px solid var(--border)"><td style="padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap;width:1%">${key}</td><td style="padding:4px 0;font-family:monospace;font-size:12px;word-break:break-all">${displayVal}</td></tr>`;
+    }
+    envHtml += '</table>';
+    el.innerHTML = envHtml;
+
+    let otherHtml = "";
+    if (Object.keys(other).length > 0) {
+      otherHtml = `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)"><h3 style="font-size:13px;font-weight:600;color:var(--muted);margin-bottom:4px">${t("otherFields")}</h3><table style="width:100%;font-size:13px;border-collapse:collapse">`;
+      for (const [key, val] of Object.entries(other)) {
+        const displayVal = typeof val === 'object' ? JSON.stringify(val) : String(val);
+        otherHtml += `<tr style="border-bottom:1px solid var(--border)"><td style="padding:4px 8px 4px 0;color:var(--muted);white-space:nowrap;width:1%">${key}</td><td style="padding:4px 0;font-family:monospace;font-size:12px;word-break:break-all">${displayVal}</td></tr>`;
+      }
+      otherHtml += '</table></div>';
+    }
+    otherHtml += `<div style="margin-top:8px;font-size:12px;color:var(--muted)">📁 ${data.path}</div>`;
+    otherEl.innerHTML = otherHtml;
+  } catch (e) {
+    document.getElementById("currentInfo").textContent = `${t("readFailed")}: ${translateError(e.message)}`;
+  }
+}
+
+async function doRemoteSwitch(serverName, configContent) {
+  try {
+    await api("POST", `api/servers/${serverName}/switch`, { content: configContent });
+    toast("切换成功", "success");
+    await loadRemoteCurrent(serverName);
+  } catch (e) {
+    toast(translateError(e.message), "error");
+  }
+}
+
 // --- Init ---
 document.getElementById("fileName").textContent = t("selectConfig");
+loadServers();
 loadAll();
 </script>
 </body>

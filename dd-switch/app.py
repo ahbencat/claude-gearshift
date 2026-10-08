@@ -12,6 +12,8 @@ from pathlib import Path
 from flask import Flask, jsonify, make_response, render_template, request, redirect, url_for
 from functools import wraps
 
+import ssh_manager
+
 app = Flask(__name__)
 
 # --- 密码验证 ---
@@ -331,6 +333,169 @@ def api_switch():
         do_switch(path)
         summary = get_current_summary()
         return jsonify({"message": f"已切换为 {name}", "current": {"path": summary["path"], "env": summary["env"], "other_fields": summary["other_fields"]}})
+    except Exception as e:
+        return jsonify({"error": f"切换失败: {e}"}), 500
+
+
+# --- Server Management ---
+
+@app.route("/api/servers")
+@login_required
+def api_servers_list():
+    """List all configured servers (without passphrase)."""
+    servers = ssh_manager.load_servers()
+    # Remove passphrase from response
+    safe = []
+    for s in servers:
+        safe.append({
+            "name": s["name"],
+            "host": s["host"],
+            "port": s.get("port", 22),
+            "username": s["username"],
+            "key_path": s.get("key_path", ""),
+            "has_passphrase": s.get("passphrase") is not None,
+        })
+    return jsonify({"servers": safe})
+
+
+@app.route("/api/servers", methods=["POST"])
+@login_required
+def api_servers_add():
+    """Add a new server."""
+    body = request.get_json(force=True)
+    name = body.get("name", "").strip()
+    host = body.get("host", "").strip()
+    port = body.get("port", 22)
+    username = body.get("username", "").strip()
+    key_path = body.get("key_path", "").strip()
+    passphrase = body.get("passphrase", "")
+
+    if not name or not host or not username:
+        return jsonify({"error": "name、host、username 不能为空"}), 400
+    if "/" in name or "\\" in name:
+        return jsonify({"error": "名称不合法"}), 400
+
+    server = {
+        "name": name,
+        "host": host,
+        "port": int(port) if port else 22,
+        "username": username,
+        "key_path": key_path,
+        "passphrase": passphrase,
+    }
+
+    try:
+        ssh_manager.add_server(server, ACCESS_PASSWORD)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 409
+    except Exception as e:
+        return jsonify({"error": f"添加失败: {e}"}), 500
+
+    return jsonify({"name": name, "message": "添加成功"}), 201
+
+
+@app.route("/api/servers/<name>", methods=["PUT"])
+@login_required
+def api_servers_update(name):
+    """Update an existing server."""
+    body = request.get_json(force=True)
+    updates = {}
+    for field in ["host", "port", "username", "key_path", "passphrase"]:
+        if field in body:
+            updates[field] = body[field]
+
+    if not updates:
+        return jsonify({"error": "没有要更新的字段"}), 400
+
+    try:
+        ssh_manager.update_server(name, updates, ACCESS_PASSWORD)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
+    except Exception as e:
+        return jsonify({"error": f"更新失败: {e}"}), 500
+
+    return jsonify({"name": name, "message": "更新成功"})
+
+
+@app.route("/api/servers/<name>", methods=["DELETE"])
+@login_required
+def api_servers_delete(name):
+    """Delete a server."""
+    try:
+        ssh_manager.delete_server(name)
+    except Exception as e:
+        return jsonify({"error": f"删除失败: {e}"}), 500
+    return jsonify({"name": name, "message": "已删除"})
+
+
+@app.route("/api/servers/<name>/test")
+@login_required
+def api_servers_test(name):
+    """Test SSH connection to a server."""
+    servers = ssh_manager.load_servers()
+    server = next((s for s in servers if s["name"] == name), None)
+    if not server:
+        return jsonify({"error": f"服务器 {name} 不存在"}), 404
+    try:
+        client = ssh_manager.get_ssh_client(server, ACCESS_PASSWORD)
+        client.close()
+        return jsonify({"message": "连接成功"})
+    except Exception as e:
+        return jsonify({"error": f"连接失败: {e}"}), 400
+
+
+@app.route("/api/servers/<name>/configs")
+@login_required
+def api_servers_configs(name):
+    """Get configs from a remote server."""
+    servers = ssh_manager.load_servers()
+    server = next((s for s in servers if s["name"] == name), None)
+    if not server:
+        return jsonify({"error": f"服务器 {name} 不存在"}), 404
+    try:
+        configs = ssh_manager.remote_scan_configs(server, ACCESS_PASSWORD)
+        return jsonify({"configs": configs})
+    except Exception as e:
+        return jsonify({"error": f"获取配置失败: {e}"}), 500
+
+
+@app.route("/api/servers/<name>/current")
+@login_required
+def api_servers_current(name):
+    """Get current config from a remote server."""
+    servers = ssh_manager.load_servers()
+    server = next((s for s in servers if s["name"] == name), None)
+    if not server:
+        return jsonify({"error": f"服务器 {name} 不存在"}), 404
+    try:
+        result = ssh_manager.remote_read_config(server, ACCESS_PASSWORD)
+        if not result["exists"]:
+            return jsonify({"exists": False, "message": "远程 settings.json 不存在"})
+        content = result["content"]
+        env = content.get("env", {})
+        other_fields = {k: v for k, v in content.items() if k != "env"}
+        return jsonify({"exists": True, "env": env, "other_fields": other_fields, "path": ssh_manager.REMOTE_CONFIG_PATH})
+    except Exception as e:
+        return jsonify({"error": f"读取失败: {e}"}), 500
+
+
+@app.route("/api/servers/<name>/switch", methods=["POST"])
+@login_required
+def api_servers_switch(name):
+    """Switch config on a remote server."""
+    servers = ssh_manager.load_servers()
+    server = next((s for s in servers if s["name"] == name), None)
+    if not server:
+        return jsonify({"error": f"服务器 {name} 不存在"}), 404
+
+    body = request.get_json(force=True)
+    config_content = body.get("content")
+    if not config_content:
+        return jsonify({"error": "content 不能为空"}), 400
+
+    try:
+        result = ssh_manager.remote_switch(server, ACCESS_PASSWORD, config_content)
+        return jsonify({"message": f"已切换", "result": result})
     except Exception as e:
         return jsonify({"error": f"切换失败: {e}"}), 500
 

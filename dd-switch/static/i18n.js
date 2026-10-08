@@ -57,6 +57,11 @@
       errNameRequired: "name 不能为空",
       errContentRequired: "content 不能为空",
       errSwitchFailed: (msg) => `切换失败: ${msg}`,
+      localServer: "本地服务器",
+      manageServers: "管理服务器",
+      addServer: "添加服务器",
+      close: "关闭",
+      add: "添加",
     },
     en: {
       title: "Claude-GearShift - Claude Code Config Switcher",
@@ -113,6 +118,11 @@
       errNameRequired: "name is required",
       errContentRequired: "content is required",
       errSwitchFailed: (msg) => `Switch failed: ${msg}`,
+      localServer: "Local Server",
+      manageServers: "Manage Servers",
+      addServer: "Add Server",
+      close: "Close",
+      add: "Add",
     },
   };
 
