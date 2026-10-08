@@ -29,7 +29,7 @@ python3 app.py
 # 打开 http://localhost:10086
 ```
 
-需要 `flask` + `waitress`（`pip install flask waitress`）。
+需要 `flask` + `waitress` + `paramiko` + `cryptography`（`pip install flask waitress paramiko cryptography`）。
 
 - 访问密码通过环境变量 `DD_SWITCH_PASSWORD` 设置（不设则默认 `admin`）
   > **部署提醒：** 生产环境务必设置 `DD_SWITCH_PASSWORD`，否则会回退到默认密码 `admin`。
@@ -37,6 +37,18 @@ python3 app.py
 - 页面可直接查看 / 新建 / 编辑 / 删除 / 切换 `config/` 下的配置
 - 右上角 中/EN 语言切换（记忆选择）
 - 切换逻辑与终端脚本一致，两种方式可混用
+
+### 多服务器 SSH 支持
+
+在一个 Web UI 中管理**多台远程服务器**的 Claude Code 配置：
+
+- **SSH 密钥认证** — 支持加密密钥和密码短语
+- **密码短语加密** — SSH 密钥密码短语使用 Web UI 登录密码加密存储（PBKDF2 + Fernet），绝不明文保存
+- **自动操作** — 登录后自动建立 SSH 连接，无需重复输入凭证
+- **远程配置管理** — 通过 SSH/SFTP 读取、切换、扫描远程服务器上的配置
+- **服务器管理** — 侧边栏添加 / 编辑 / 删除 / 测试服务器连接
+
+> **注意：** 远程服务器使用固定路径 `~/.claude/settings.json`。
 
 ### 🔒 密码保护
 
@@ -98,6 +110,8 @@ config/
 | **备份** | Web UI 切换前自动备份原配置到 `settings.json.bak.<时间戳>`；终端脚本直接覆盖，不备份 |
 | **合并** | 只替换 `env`（模型配置），保留 `theme` / `permissions` / `actions` / `skills` 等其他字段 |
 | **原子写入** | 临时文件 → `mv rename`，避免半写导致 JSON 损坏 |
+| **多服务器** | 通过 SSH 密钥认证管理多台远程服务器 |
+| **密码短语加密** | SSH 密钥密码短语使用 Web UI 密码加密（PBKDF2 + Fernet） |
 
 ## 依赖
 
