@@ -29,7 +29,7 @@ python3 app.py
 # open http://localhost:10086
 ```
 
-Requires `flask` + `waitress` — `pip install flask waitress`.
+Requires `flask` + `waitress` + `paramiko` + `cryptography` — `pip install flask waitress paramiko cryptography`.
 
 - Set the access password via the `DD_SWITCH_PASSWORD` env var (defaults to `admin`)
   > **Deployment note:** always set `DD_SWITCH_PASSWORD` in production — without it, the UI falls back to the default password `admin`.
@@ -37,6 +37,18 @@ Requires `flask` + `waitress` — `pip install flask waitress`.
 - Browse / create / edit / delete / switch configs under `config/` right from the page
 - 中/EN language toggle in the top-right corner (your choice is remembered)
 - Same switch semantics as the CLI script — both can be used interchangeably
+
+### Multi-Server SSH Support
+
+Manage Claude Code configs on **multiple remote servers** from one Web UI:
+
+- **SSH key-based authentication** — supports encrypted keys with passphrase
+- **Passphrase encryption** — SSH key passphrases are encrypted with your Web UI login password (PBKDF2 + Fernet), never stored in plain text
+- **Automatic operation** — once logged in, SSH connections are established automatically without re-entering credentials
+- **Remote config management** — read, switch, and scan configs on remote servers via SSH/SFTP
+- **Server management** — add / edit / delete / test servers from the sidebar
+
+> **Note:** Remote servers use the fixed path `~/.claude/settings.json`.
 
 ### 🔒 Password Protection
 
@@ -98,6 +110,8 @@ More optional fields: [Claude Code environment variables](https://docs.anthropic
 | **Back up** | Web UI backs up the current config to `settings.json.bak.<timestamp>` before switching; the CLI script overwrites directly |
 | **Merge** | Replaces only `env`, preserving `theme` / `permissions` / `actions` / `skills` |
 | **Atomic write** | Temp file + `mv rename` — no half-written JSON |
+| **Multi-server** | Manage configs on multiple remote servers via SSH key auth |
+| **Passphrase encryption** | SSH key passphrases encrypted with Web UI password (PBKDF2 + Fernet) |
 
 ## Dependencies
 
