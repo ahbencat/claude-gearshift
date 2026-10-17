@@ -33,8 +33,14 @@ Verify it applies first with `git apply --check <patch>`.
 
 ### Build & run
 
-Needs the Tauri Linux prerequisites (see `cc-switch/CONTRIBUTING.md`). The
-frontend `dist/` placeholder must exist even for this backend-only binary:
+From this directory, **`make binary`** does the whole rebuild in one shot —
+applies the patch in a throwaway git worktree, release-builds, strips, and
+installs the result to `bin/` (the cc-switch tree is left untouched). Point it at
+another checkout with `make binary CC_SWITCH_DIR=/path/to/cc-switch`.
+
+To build by hand instead (needs the Tauri Linux prerequisites — see
+`cc-switch/CONTRIBUTING.md`). The frontend `dist/` placeholder must exist even
+for this backend-only binary:
 
 ```bash
 mkdir -p dist
@@ -58,8 +64,8 @@ binary (≈13 MB), so you can skip the Rust toolchain entirely:
 - **License**: it is a build of cc-switch (MIT © 2025 Jason Young); see
   [`LICENSE.cc-switch`](LICENSE.cc-switch). Redistribution must keep that notice.
 - **Keep it in sync**: the binary is a build of the patch at the pinned commit.
-  When the patch or the cc-switch version changes, **rebuild and replace it**
-  (see *Build & run* above); do not ship a stale binary.
+  When the patch or the cc-switch version changes, rebuild and replace it with
+  `make binary`; do not ship a stale binary.
 
 ```bash
 install -m755 bin/cc-switch-proxy-linux-x86_64 ~/.local/bin/cc-switch-proxy
