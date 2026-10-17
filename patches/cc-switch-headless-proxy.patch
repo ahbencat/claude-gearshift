@@ -1,0 +1,777 @@
+diff --git a/src-tauri/Cargo.lock b/src-tauri/Cargo.lock
+index c6c65449..c86c6f35 100644
+--- a/src-tauri/Cargo.lock
++++ b/src-tauri/Cargo.lock
+@@ -6139,6 +6139,7 @@ dependencies = [
+  "libc",
+  "mio",
+  "pin-project-lite",
++ "signal-hook-registry",
+  "socket2",
+  "tokio-macros",
+  "windows-sys 0.61.2",
+diff --git a/src-tauri/Cargo.toml b/src-tauri/Cargo.toml
+index d596fd27..7faf1434 100644
+--- a/src-tauri/Cargo.toml
++++ b/src-tauri/Cargo.toml
+@@ -44,7 +44,7 @@ arboard = "3.6"
+ flate2 = "1"
+ brotli = "7"
+ zstd = "0.13"
+-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "net"] }
++tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "net", "signal"] }
+ futures = "0.3"
+ async-stream = "0.3"
+ bytes = "1.5"
+diff --git a/src-tauri/src/bin/cc-switch-proxy.rs b/src-tauri/src/bin/cc-switch-proxy.rs
+new file mode 100644
+index 00000000..e1a47bf5
+--- /dev/null
++++ b/src-tauri/src/bin/cc-switch-proxy.rs
+@@ -0,0 +1,36 @@
++//! `cc-switch-proxy` — CC Switch 本地路由的无界面入口。
++//!
++//! 只做参数解析和运行时搭建，真正的逻辑在 `cc_switch_lib::headless`。
++//! 这样 headless 守护进程与桌面端共用同一套 proxy 引擎和数据库。
++
++use cc_switch_lib::headless::{parse_args, run, HeadlessCommand, HELP};
++
++#[tokio::main]
++async fn main() {
++    let args: Vec<String> = std::env::args().skip(1).collect();
++
++    // `provider` 子命令走同步的 DAO 路径，不启动代理服务。
++    if args.first().map(String::as_str) == Some("provider") {
++        if let Err(e) = cc_switch_lib::provider_cli::run(&args[1..]) {
++            eprintln!("cc-switch-proxy: {e}");
++            std::process::exit(1);
++        }
++        return;
++    }
++
++    match parse_args(args) {
++        Ok(HeadlessCommand::Help) => {
++            println!("{HELP}");
++        }
++        Ok(HeadlessCommand::Run(opts)) => {
++            if let Err(e) = run(opts).await {
++                eprintln!("cc-switch-proxy: {e}");
++                std::process::exit(1);
++            }
++        }
++        Err(message) => {
++            eprintln!("cc-switch-proxy: {message}");
++            std::process::exit(2);
++        }
++    }
++}
+diff --git a/src-tauri/src/database/mod.rs b/src-tauri/src/database/mod.rs
+index e00598dc..eb91c938 100644
+--- a/src-tauri/src/database/mod.rs
++++ b/src-tauri/src/database/mod.rs
+@@ -98,7 +98,14 @@ impl Database {
+     ///
+     /// 数据库文件位于 `~/.cc-switch/cc-switch.db`
+     pub fn init() -> Result<Self, AppError> {
+-        let db_path = get_app_config_dir().join("cc-switch.db");
++        Self::init_at(&get_app_config_dir().join("cc-switch.db"))
++    }
++
++    /// 在指定路径初始化数据库连接并创建/迁移表。
++    ///
++    /// 逻辑与 [`Self::init`] 完全一致，只是把数据库文件位置显式化，供
++    /// headless 守护进程的 `--db` 参数（以及需要独立库文件的调用方）使用。
++    pub fn init_at(db_path: &std::path::Path) -> Result<Self, AppError> {
+         let db_exists = db_path.exists();
+ 
+         // 确保父目录存在
+@@ -106,7 +113,7 @@ impl Database {
+             std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+         }
+ 
+-        let conn = Connection::open(&db_path).map_err(|e| AppError::Database(e.to_string()))?;
++        let conn = Connection::open(db_path).map_err(|e| AppError::Database(e.to_string()))?;
+ 
+         // 启用外键约束
+         conn.execute("PRAGMA foreign_keys = ON;", [])
+diff --git a/src-tauri/src/headless.rs b/src-tauri/src/headless.rs
+new file mode 100644
+index 00000000..2032d2dc
+--- /dev/null
++++ b/src-tauri/src/headless.rs
+@@ -0,0 +1,245 @@
++//! 无界面的本地路由守护进程（headless）。
++//!
++//! 复用桌面端同一套 `proxy` 引擎，但不启动 Tauri 窗口/托盘，适合在
++//! Linux 服务器上作为 systemd 服务运行，供 `linux_switch` 之类的工具
++//! 按需拉起/停止，替代 LiteLLM。
++//!
++//! 供应商与模型来自 CC Switch 的 SQLite 库（默认
++//! `~/.cc-switch/cc-switch.db`，可用 `--db` 指向别的库）。请先用桌面端
++//! CC Switch 配置好供应商；无界面进程不做 Live 配置改写，只提供转发服务。
++//!
++//! 注意：本二进制与桌面端同源，仍会链接 Tauri/WebKitGTK 运行库，因此
++//! 无界面运行也需要安装 WebKitGTK 运行时依赖（见仓库 README 的 Linux 前置依赖）。
++
++use crate::database::Database;
++use crate::proxy::server::ProxyServer;
++use std::path::PathBuf;
++use std::sync::Arc;
++
++/// `--help` 文本。
++pub const HELP: &str = "\
++cc-switch-proxy — CC Switch 本地路由的无界面守护进程
++
++用法:
++  cc-switch-proxy [选项]
++
++选项:
++  --host <ADDR>   监听地址（默认取数据库中的设置，通常 127.0.0.1）
++  --port <PORT>   监听端口（默认取数据库中的设置，通常 15721）
++  --db <PATH>     使用指定的 SQLite 数据库（默认 ~/.cc-switch/cc-switch.db）
++  -h, --help      显示本帮助
++
++子命令:
++  provider ...    管理数据库里的供应商（list/add/update/delete/set-current/import）
++                  见 `cc-switch-proxy provider --help`
++
++供应商与模型来自 CC Switch 的数据库；请先用桌面端 CC Switch 配置好供应商。
++环境变量 RUST_LOG 控制日志级别（off/error/warn/info/debug/trace），默认 info。
++";
++
++/// 命令行解析结果。
++#[derive(Debug, PartialEq, Eq)]
++pub enum HeadlessCommand {
++    Run(HeadlessOptions),
++    Help,
++}
++
++/// headless 守护进程的运行参数。字段为 `None` 时回退到数据库中的配置。
++#[derive(Debug, Default, PartialEq, Eq)]
++pub struct HeadlessOptions {
++    pub host: Option<String>,
++    pub port: Option<u16>,
++    pub db_path: Option<PathBuf>,
++}
++
++/// 解析命令行参数（不含程序名本身）。未知参数返回 `Err`。
++pub fn parse_args<I>(args: I) -> Result<HeadlessCommand, String>
++where
++    I: IntoIterator,
++    I::Item: Into<String>,
++{
++    let mut opts = HeadlessOptions::default();
++    let mut iter = args.into_iter().map(Into::into);
++
++    while let Some(arg) = iter.next() {
++        match arg.as_str() {
++            "-h" | "--help" => return Ok(HeadlessCommand::Help),
++            "--host" => {
++                opts.host = Some(iter.next().ok_or("--host 需要一个参数")?);
++            }
++            "--port" => {
++                let value = iter.next().ok_or("--port 需要一个参数")?;
++                let port: u16 = value
++                    .parse()
++                    .map_err(|_| format!("无效的端口: {value}（应为 0-65535）"))?;
++                opts.port = Some(port);
++            }
++            "--db" => {
++                let value = iter.next().ok_or("--db 需要一个参数")?;
++                opts.db_path = Some(PathBuf::from(value));
++            }
++            other => return Err(format!("未知参数: {other}（用 --help 查看用法）")),
++        }
++    }
++
++    Ok(HeadlessCommand::Run(opts))
++}
++
++/// 启动本地路由并阻塞，直到收到 SIGINT / SIGTERM 后优雅停止。
++pub async fn run(opts: HeadlessOptions) -> Result<(), String> {
++    install_logger();
++    crate::panic_hook::setup_panic_hook();
++
++    let db = match opts.db_path.as_deref() {
++        Some(path) => Database::init_at(path),
++        None => Database::init(),
++    }
++    .map_err(|e| format!("打开数据库失败: {e}"))?;
++    let db = Arc::new(db);
++
++    // 与桌面端启动一致：初始化全局 HTTP 客户端（可能配置了上游代理）。
++    let upstream = db.get_global_proxy_url().ok().flatten();
++    crate::proxy::http_client::init(upstream.as_deref())
++        .map_err(|e| format!("初始化 HTTP 客户端失败: {e}"))?;
++
++    let mut config = db
++        .get_proxy_config()
++        .await
++        .map_err(|e| format!("读取代理配置失败: {e}"))?;
++    if let Some(host) = opts.host {
++        config.listen_address = host;
++    }
++    if let Some(port) = opts.port {
++        config.listen_port = port;
++    }
++
++    // 无界面：没有 Tauri AppHandle，故障转移 UI 事件与 Copilot/Codex/xAI
++    // OAuth 状态不可用，其余转发逻辑不受影响。
++    let server = ProxyServer::new(config, db.clone(), None);
++    let info = server
++        .start()
++        .await
++        .map_err(|e| format!("启动本地路由失败: {e}"))?;
++    log::info!("本地路由已启动: http://{}:{}", info.address, info.port);
++
++    wait_for_shutdown().await;
++
++    log::info!("收到退出信号，正在停止本地路由…");
++    if let Err(e) = server.stop().await {
++        log::warn!("停止本地路由时出错: {e}");
++    }
++    log::info!("本地路由已停止");
++    Ok(())
++}
++
++#[cfg(unix)]
++async fn wait_for_shutdown() {
++    use tokio::signal::unix::{signal, SignalKind};
++
++    let mut term = match signal(SignalKind::terminate()) {
++        Ok(sig) => sig,
++        Err(e) => {
++            log::warn!("无法监听 SIGTERM: {e}，改用 Ctrl-C");
++            let _ = tokio::signal::ctrl_c().await;
++            return;
++        }
++    };
++    let mut int = match signal(SignalKind::interrupt()) {
++        Ok(sig) => sig,
++        Err(e) => {
++            log::warn!("无法监听 SIGINT: {e}，改用 Ctrl-C");
++            let _ = tokio::signal::ctrl_c().await;
++            return;
++        }
++    };
++
++    tokio::select! {
++        _ = term.recv() => log::info!("收到 SIGTERM"),
++        _ = int.recv() => log::info!("收到 SIGINT"),
++    }
++}
++
++#[cfg(not(unix))]
++async fn wait_for_shutdown() {
++    let _ = tokio::signal::ctrl_c().await;
++}
++
++/// 安装一个把日志写到 stderr 的最小 logger。
++///
++/// 桌面端用的是 `tauri-plugin-log`（依赖 AppHandle），无界面进程用不了，
++/// 这里不再引入额外依赖。`RUST_LOG` 接受 log crate 的级别名。
++fn install_logger() {
++    use std::sync::Once;
++
++    static INIT: Once = Once::new();
++    INIT.call_once(|| {
++        let level = std::env::var("RUST_LOG")
++            .ok()
++            .and_then(|value| value.parse::<log::LevelFilter>().ok())
++            .unwrap_or(log::LevelFilter::Info);
++
++        let _ = log::set_boxed_logger(Box::new(StderrLogger));
++        log::set_max_level(level);
++    });
++}
++
++struct StderrLogger;
++
++impl log::Log for StderrLogger {
++    fn enabled(&self, metadata: &log::Metadata) -> bool {
++        metadata.level() <= log::max_level()
++    }
++
++    fn log(&self, record: &log::Record) {
++        if self.enabled(record.metadata()) {
++            eprintln!("[{}] {}", record.level(), record.args());
++        }
++    }
++
++    fn flush(&self) {}
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn parse_args_defaults_to_database_config() {
++        assert_eq!(
++            parse_args(Vec::<String>::new()).unwrap(),
++            HeadlessCommand::Run(HeadlessOptions::default())
++        );
++    }
++
++    #[test]
++    fn parse_args_reads_host_port_and_db() {
++        let args = vec![
++            "--host".to_string(),
++            "0.0.0.0".to_string(),
++            "--port".to_string(),
++            "9301".to_string(),
++            "--db".to_string(),
++            "/tmp/x.db".to_string(),
++        ];
++        assert_eq!(
++            parse_args(args).unwrap(),
++            HeadlessCommand::Run(HeadlessOptions {
++                host: Some("0.0.0.0".to_string()),
++                port: Some(9301),
++                db_path: Some(PathBuf::from("/tmp/x.db")),
++            })
++        );
++    }
++
++    #[test]
++    fn parse_args_help_wins() {
++        assert_eq!(parse_args(["--help"]).unwrap(), HeadlessCommand::Help);
++    }
++
++    #[test]
++    fn parse_args_rejects_unknown_and_missing_values() {
++        assert!(parse_args(["--nope"]).is_err());
++        assert!(parse_args(["--port"]).is_err());
++        assert!(parse_args(["--port", "70000"]).is_err());
++    }
++}
+diff --git a/src-tauri/src/lib.rs b/src-tauri/src/lib.rs
+index 263a0b93..5725b23d 100644
+--- a/src-tauri/src/lib.rs
++++ b/src-tauri/src/lib.rs
+@@ -16,6 +16,7 @@ mod error;
+ mod gemini_config;
+ mod gemini_mcp;
+ mod grok_config;
++pub mod headless;
+ pub mod hermes_config;
+ mod init_status;
+ mod jsonc_document;
+@@ -34,6 +35,7 @@ mod pi_config;
+ mod prompt;
+ mod prompt_files;
+ mod provider;
++pub mod provider_cli;
+ mod proxy;
+ mod services;
+ mod session_manager;
+diff --git a/src-tauri/src/provider_cli.rs b/src-tauri/src/provider_cli.rs
+new file mode 100644
+index 00000000..8887fb6f
+--- /dev/null
++++ b/src-tauri/src/provider_cli.rs
+@@ -0,0 +1,404 @@
++//! `cc-switch-proxy provider` — 在无桌面端的情况下管理 cc-switch DB 里的供应商。
++//!
++//! 复用 cc-switch 自己的 DAO（`Database::save_provider` / `set_current_provider` …），
++//! 因此 schema 与迁移始终与桌面端一致，不需要调用方拼 SQL。供 dd-switch 之类的
++//! 控制器读写供应商，交给本地路由使用。
++//!
++//! 用法（默认 `--app claude`）：
++//!   cc-switch-proxy provider list        [--app claude] [--db PATH]
++//!   cc-switch-proxy provider add         --name N --base-url U --token T
++//!                                        [--model M] [--haiku M] [--sonnet M] [--opus M]
++//!                                        [--id ID] [--set-current]
++//!   cc-switch-proxy provider update      --id ID [同上字段]
++//!   cc-switch-proxy provider delete      --id ID
++//!   cc-switch-proxy provider set-current --id ID
++//!   cc-switch-proxy provider import      --dir DIR [--set-current]
++//!
++//! 所有命令都往 stdout 打印一行 JSON，便于调用方解析。
++
++use crate::database::Database;
++use crate::provider::Provider;
++use serde_json::{json, Map, Value};
++use std::collections::HashMap;
++use std::path::Path;
++
++pub const PROVIDER_HELP: &str = "\
++cc-switch-proxy provider — 管理 cc-switch DB 里的供应商（无桌面端）
++
++用法:
++  cc-switch-proxy provider <list|add|update|delete|set-current|import> [选项]
++
++通用选项:
++  --app <APP>   应用类型，默认 claude
++  --db <PATH>   SQLite 数据库路径，默认 ~/.cc-switch/cc-switch.db
++
++list:
++  列出该应用的所有供应商（含 isCurrent / settingsConfig）。
++
++add / update:
++  --name <N>        显示名（add 必填）
++  --base-url <URL>  上游地址        → ANTHROPIC_BASE_URL
++  --token <T>       凭据            → ANTHROPIC_AUTH_TOKEN
++  --model <M>       默认模型        → ANTHROPIC_MODEL
++  --haiku/--sonnet/--opus <M>       档位模型 → ANTHROPIC_DEFAULT_*_MODEL
++  --id <ID>         供应商标识（update 必填；add 省略则按名称生成）
++  --set-current     保存后设为当前供应商
++  传空值（如 --token ''）可清空对应字段。
++
++delete / set-current:
++  --id <ID>         目标供应商标识
++
++import:
++  --dir <DIR>       扫描目录下的 *.json（跳过 sample.json），逐个写入。
++                    文件内容按 Claude 供应商的 {\"env\": {...}} 形状处理。
++  --set-current     导入后把第一个设为当前
++
++输出: 单行 JSON。
++";
++
++const DEFAULT_APP: &str = "claude";
++
++/// 分发 `provider` 子命令（`args` 不含开头的 `provider`）。
++pub fn run(args: &[String]) -> Result<(), String> {
++    let action = args.first().map(String::as_str).unwrap_or("list");
++    let rest: &[String] = args.get(1..).unwrap_or(&[]);
++
++    match action {
++        "-h" | "--help" | "help" => {
++            println!("{PROVIDER_HELP}");
++            Ok(())
++        }
++        "list" => cmd_list(rest),
++        "add" => cmd_upsert(rest, true),
++        "update" => cmd_upsert(rest, false),
++        "delete" => cmd_delete(rest),
++        "set-current" => cmd_set_current(rest),
++        "import" => cmd_import(rest),
++        other => Err(format!(
++            "未知的 provider 子命令: {other}（用 `cc-switch-proxy provider --help`）"
++        )),
++    }
++}
++
++fn cmd_list(args: &[String]) -> Result<(), String> {
++    let flags = parse_flags(args)?;
++    let db = open_db(&flags)?;
++    let app = app_of(&flags);
++
++    let providers = db.get_all_providers(&app).map_err(|e| e.to_string())?;
++    let current = db.get_current_provider(&app).map_err(|e| e.to_string())?;
++    let items: Vec<Value> = providers
++        .values()
++        .map(|p| {
++            json!({
++                "id": p.id,
++                "name": p.name,
++                "settingsConfig": p.settings_config,
++                "inFailoverQueue": p.in_failover_queue,
++                "isCurrent": current.as_deref() == Some(p.id.as_str()),
++            })
++        })
++        .collect();
++
++    emit(&json!({ "app": app, "current": current, "providers": items }));
++    Ok(())
++}
++
++fn cmd_upsert(args: &[String], is_add: bool) -> Result<(), String> {
++    let flags = parse_flags(args)?;
++    let db = open_db(&flags)?;
++    let app = app_of(&flags);
++
++    let existing = match flags.get("id") {
++        Some(id) => db.get_provider_by_id(id, &app).map_err(|e| e.to_string())?,
++        None => None,
++    };
++
++    let id = match flags.get("id") {
++        Some(id) => id.clone(),
++        None if is_add => {
++            let name = flag(&flags, "name").ok_or("add 需要 --name")?;
++            unique_id(&db, &app, name)?
++        }
++        None => return Err("update 需要 --id".to_string()),
++    };
++
++    let name = flag(&flags, "name")
++        .map(String::from)
++        .or_else(|| existing.as_ref().map(|p| p.name.clone()))
++        .ok_or("add 需要 --name")?;
++
++    // 在现有 env 基础上合并（update 只改传进来的字段）。
++    let mut env = existing
++        .as_ref()
++        .and_then(|p| p.settings_config.get("env"))
++        .and_then(Value::as_object)
++        .cloned()
++        .unwrap_or_default();
++    apply_env(&mut env, &flags, "base-url", "ANTHROPIC_BASE_URL");
++    apply_env(&mut env, &flags, "token", "ANTHROPIC_AUTH_TOKEN");
++    apply_env(&mut env, &flags, "model", "ANTHROPIC_MODEL");
++    apply_env(&mut env, &flags, "haiku", "ANTHROPIC_DEFAULT_HAIKU_MODEL");
++    apply_env(&mut env, &flags, "sonnet", "ANTHROPIC_DEFAULT_SONNET_MODEL");
++    apply_env(&mut env, &flags, "opus", "ANTHROPIC_DEFAULT_OPUS_MODEL");
++
++    let settings_config = json!({ "env": Value::Object(env) });
++    let provider = Provider::with_id(id.clone(), name, settings_config, None);
++    db.save_provider(&app, &provider)
++        .map_err(|e| e.to_string())?;
++
++    if has(&flags, "set-current") {
++        db.set_current_provider(&app, &id)
++            .map_err(|e| e.to_string())?;
++    }
++
++    let current = db.get_current_provider(&app).ok().flatten();
++    emit(&json!({ "ok": true, "app": app, "id": id, "current": current }));
++    Ok(())
++}
++
++fn cmd_delete(args: &[String]) -> Result<(), String> {
++    let flags = parse_flags(args)?;
++    let db = open_db(&flags)?;
++    let app = app_of(&flags);
++    let id = flag(&flags, "id").ok_or("delete 需要 --id")?;
++
++    db.delete_provider(&app, id).map_err(|e| e.to_string())?;
++    emit(&json!({ "ok": true, "app": app, "deleted": id }));
++    Ok(())
++}
++
++fn cmd_set_current(args: &[String]) -> Result<(), String> {
++    let flags = parse_flags(args)?;
++    let db = open_db(&flags)?;
++    let app = app_of(&flags);
++    let id = flag(&flags, "id").ok_or("set-current 需要 --id")?;
++
++    db.set_current_provider(&app, id)
++        .map_err(|e| e.to_string())?;
++    emit(&json!({ "ok": true, "app": app, "current": id }));
++    Ok(())
++}
++
++fn cmd_import(args: &[String]) -> Result<(), String> {
++    let flags = parse_flags(args)?;
++    let db = open_db(&flags)?;
++    let app = app_of(&flags);
++    let dir = flag(&flags, "dir").ok_or("import 需要 --dir")?;
++
++    let mut imported: Vec<String> = Vec::new();
++    let mut errors: Vec<String> = Vec::new();
++
++    let entries = std::fs::read_dir(dir).map_err(|e| format!("读取目录失败 {dir}: {e}"))?;
++    for entry in entries.flatten() {
++        let path = entry.path();
++        if path.extension().and_then(|s| s.to_str()) != Some("json") {
++            continue;
++        }
++        let Some(stem) = path.file_stem().and_then(|s| s.to_str()).map(String::from) else {
++            continue;
++        };
++        if stem == "sample" {
++            continue;
++        }
++        let text = match std::fs::read_to_string(&path) {
++            Ok(text) => text,
++            Err(e) => {
++                errors.push(format!("{stem}: 读取失败: {e}"));
++                continue;
++            }
++        };
++        let value: Value = match serde_json::from_str(&text) {
++            Ok(value) => value,
++            Err(e) => {
++                errors.push(format!("{stem}: JSON 解析失败: {e}"));
++                continue;
++            }
++        };
++        // Claude 供应商就是 {"env": {...}}；如果文件本身就是 env 块，包一层。
++        let settings_config = if value.get("env").is_some() {
++            value
++        } else {
++            json!({ "env": value })
++        };
++        let provider = Provider::with_id(stem.clone(), stem.clone(), settings_config, None);
++        match db.save_provider(&app, &provider) {
++            Ok(()) => imported.push(stem),
++            Err(e) => errors.push(format!("{stem}: {e}")),
++        }
++    }
++
++    if has(&flags, "set-current") {
++        if let Some(first) = imported.first() {
++            db.set_current_provider(&app, first)
++                .map_err(|e| e.to_string())?;
++        }
++    }
++
++    emit(&json!({
++        "ok": errors.is_empty(),
++        "app": app,
++        "imported": imported,
++        "errors": errors,
++    }));
++    Ok(())
++}
++
++// --- 辅助 ---
++
++fn parse_flags(args: &[String]) -> Result<HashMap<String, String>, String> {
++    let mut flags = HashMap::new();
++    let mut iter = args.iter();
++    while let Some(arg) = iter.next() {
++        let Some(body) = arg.strip_prefix("--") else {
++            return Err(format!("意外的位置参数: {arg}（选项都以 -- 开头）"));
++        };
++        if let Some((key, value)) = body.split_once('=') {
++            flags.insert(key.to_string(), value.to_string());
++        } else if iter
++            .clone()
++            .next()
++            .is_some_and(|next| !next.starts_with("--"))
++        {
++            flags.insert(body.to_string(), iter.next().unwrap().clone());
++        } else {
++            // 布尔开关，如 --set-current
++            flags.insert(body.to_string(), "true".to_string());
++        }
++    }
++    Ok(flags)
++}
++
++fn open_db(flags: &HashMap<String, String>) -> Result<Database, String> {
++    match flags.get("db") {
++        Some(path) => Database::init_at(Path::new(path)),
++        None => Database::init(),
++    }
++    .map_err(|e| format!("打开数据库失败: {e}"))
++}
++
++fn app_of(flags: &HashMap<String, String>) -> String {
++    flags
++        .get("app")
++        .cloned()
++        .unwrap_or_else(|| DEFAULT_APP.to_string())
++}
++
++fn flag<'a>(flags: &'a HashMap<String, String>, key: &str) -> Option<&'a str> {
++    flags.get(key).map(String::as_str)
++}
++
++fn has(flags: &HashMap<String, String>, key: &str) -> bool {
++    flags.contains_key(key)
++}
++
++/// 把 `--flag-key` 写进 env 的 `env-key`；传空字符串则删除该键。
++fn apply_env(
++    env: &mut Map<String, Value>,
++    flags: &HashMap<String, String>,
++    flag_key: &str,
++    env_key: &str,
++) {
++    if let Some(value) = flags.get(flag_key) {
++        if value.is_empty() {
++            env.remove(env_key);
++        } else {
++            env.insert(env_key.to_string(), Value::String(value.clone()));
++        }
++    }
++}
++
++fn unique_id(db: &Database, app: &str, name: &str) -> Result<String, String> {
++    let base = slugify(name);
++    let existing = db.get_provider_ids(app).map_err(|e| e.to_string())?;
++    if !existing.contains(&base) {
++        return Ok(base);
++    }
++    let mut n = 2;
++    loop {
++        let candidate = format!("{base}-{n}");
++        if !existing.contains(&candidate) {
++            return Ok(candidate);
++        }
++        n += 1;
++    }
++}
++
++fn slugify(name: &str) -> String {
++    let mut out = String::new();
++    let mut prev_dash = false;
++    for ch in name.chars() {
++        if ch.is_ascii_alphanumeric() {
++            out.push(ch.to_ascii_lowercase());
++            prev_dash = false;
++        } else if !prev_dash && !out.is_empty() {
++            out.push('-');
++            prev_dash = true;
++        }
++    }
++    while out.ends_with('-') {
++        out.pop();
++    }
++    if out.is_empty() {
++        out.push_str("provider");
++    }
++    out
++}
++
++fn emit(value: &Value) {
++    println!(
++        "{}",
++        serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string())
++    );
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn args(items: &[&str]) -> Vec<String> {
++        items.iter().map(|s| s.to_string()).collect()
++    }
++
++    #[test]
++    fn parse_flags_reads_values_and_booleans() {
++        let flags = parse_flags(&args(&[
++            "--name",
++            "My Provider",
++            "--token=abc",
++            "--set-current",
++            "--db",
++            "/tmp/x.db",
++        ]))
++        .unwrap();
++        assert_eq!(flags.get("name").map(String::as_str), Some("My Provider"));
++        assert_eq!(flags.get("token").map(String::as_str), Some("abc"));
++        assert_eq!(flags.get("set-current").map(String::as_str), Some("true"));
++        assert_eq!(flags.get("db").map(String::as_str), Some("/tmp/x.db"));
++    }
++
++    #[test]
++    fn parse_flags_rejects_positional() {
++        assert!(parse_flags(&args(&["oops"])).is_err());
++    }
++
++    #[test]
++    fn slugify_makes_stable_ids() {
++        assert_eq!(slugify("My Provider"), "my-provider");
++        assert_eq!(slugify("  火山 Ark  "), "ark");
++        assert_eq!(slugify("!!!"), "provider");
++    }
++
++    #[test]
++    fn apply_env_writes_and_clears() {
++        let mut env = Map::new();
++        let flags = parse_flags(&args(&["--token", "", "--base-url", "https://x"])).unwrap();
++        apply_env(&mut env, &flags, "base-url", "ANTHROPIC_BASE_URL");
++        apply_env(&mut env, &flags, "token", "ANTHROPIC_AUTH_TOKEN");
++        assert_eq!(
++            env.get("ANTHROPIC_BASE_URL").and_then(Value::as_str),
++            Some("https://x")
++        );
++        assert!(env.get("ANTHROPIC_AUTH_TOKEN").is_none());
++    }
++}
