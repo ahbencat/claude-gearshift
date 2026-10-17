@@ -52,12 +52,14 @@ override with `--db <path>`. `RUST_LOG` sets the log level (default `info`).
 binary (≈13 MB), so you can skip the Rust toolchain entirely:
 
 - **Platform**: Linux x86_64, glibc.
-- **SHA-256**: `56165547078231ea8db2894f330878cedca2a09527f3fa0c47085a97480b8bbf`
 - **Runtime**: still needs the WebKitGTK 4.1 / GTK 3 runtime libraries, because it
   links cc-switch's crate. Install them first, e.g. on Debian/Ubuntu:
   `sudo apt-get install libwebkit2gtk-4.1-0 libgtk-3-0 libsoup-3.0-0`.
 - **License**: it is a build of cc-switch (MIT © 2025 Jason Young); see
   [`LICENSE.cc-switch`](LICENSE.cc-switch). Redistribution must keep that notice.
+- **Keep it in sync**: the binary is a build of the patch at the pinned commit.
+  When the patch or the cc-switch version changes, **rebuild and replace it**
+  (see *Build & run* above); do not ship a stale binary.
 
 ```bash
 install -m755 bin/cc-switch-proxy-linux-x86_64 ~/.local/bin/cc-switch-proxy
