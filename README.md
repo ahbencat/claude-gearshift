@@ -138,7 +138,9 @@ systemctl --user restart dd-switch
 
 **Notes and limits**
 
-- Build `cc-switch-proxy` first — see [`patches/README.md`](patches/README.md).
+- Get `cc-switch-proxy` first: use the prebuilt binary in `patches/bin/`
+  (Linux x86_64; needs the WebKitGTK runtime) or build it — see
+  [`patches/README.md`](patches/README.md).
 - The binary is resolved from `PATH` (or `DD_SWITCH_ROUTE_PROXY_BIN`) — use
   whatever environment you would normally launch it in.
 - Provider tokens land in cc-switch's DB (user-private) and are masked in every

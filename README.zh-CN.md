@@ -129,7 +129,8 @@ systemctl --user restart dd-switch
 
 **说明与限制**
 
-- 先构建 `cc-switch-proxy` —— 见 [`patches/README.md`](patches/README.md)。
+- 先拿到 `cc-switch-proxy`：用 `patches/bin/` 里的预编译二进制（Linux x86_64，需
+  WebKitGTK 运行库），或自行构建——见 [`patches/README.md`](patches/README.md)。
 - 可执行文件从 `PATH`（或 `DD_SWITCH_ROUTE_PROXY_BIN`）解析——用你平时启动它的
   那个环境即可。
 - 供应商凭据落在 cc-switch 的库里（用户私有），并在所有 API 响应中打码——不要写进
