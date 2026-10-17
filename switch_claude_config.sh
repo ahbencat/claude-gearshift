@@ -15,6 +15,17 @@ set -euo pipefail
 
 CLAUDE_CONFIG="${HOME}/.claude/settings.json"
 
+# 0. Refuse while dd-switch local routing is active / 本地路由启用中时拒绝切换
+#    （路由持有 env 快照，直接切换会破坏它的恢复逻辑）
+ROUTE_STATE="${HOME}/.config/dd-switch/route-state.json"
+if [ -f "$ROUTE_STATE" ]; then
+    echo "错误: dd-switch 本地路由（cc-switch-proxy）启用中，切换配置会破坏路由的恢复快照。"
+    echo "      请先在 dd-switch Web UI 关闭路由，再执行本脚本。"
+    echo "Error: dd-switch local routing (cc-switch-proxy) is active; switching would corrupt its restore snapshot."
+    echo "       Disable routing in the dd-switch Web UI first."
+    exit 1
+fi
+
 # 1. Determine the config directory / 确定配置存放目录
 if [ $# -ge 1 ]; then
     CONFIG_DIR="$1"

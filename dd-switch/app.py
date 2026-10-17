@@ -3,9 +3,14 @@
 
 import json
 import os
+import re
 import shutil
+import signal
+import subprocess
 import tempfile
+import threading
 import time
+import urllib.request
 import uuid
 from pathlib import Path
 
@@ -189,6 +194,423 @@ def do_switch(config_path):
     return True
 
 
+# --- Local routing (cc-switch-proxy) ---
+# 开启后：以子进程按需拉起 cc-switch-proxy（cc-switch 的无界面本地路由），把 Claude Code
+# 指向本机 loopback。关闭时：恢复路由前的 env 键并结束该进程。不是 systemd 服务，随时可关。
+#
+# 供应商不在这里配置，而是写进 cc-switch 的 SQLite 库（providers 表），由
+# `cc-switch-proxy provider …` 子命令读写。档位模型映射（haiku/sonnet/opus）随供应商走。
+#
+# 全部可变项都走 dd-switch 的 EnvironmentFile，不写死任何个人路径：
+#   DD_SWITCH_ROUTE_ENABLED      开关
+#   DD_SWITCH_ROUTE_PROXY_BIN    cc-switch-proxy 可执行文件（默认从 PATH 找）
+#   DD_SWITCH_ROUTE_DB           cc-switch 的 SQLite 库（默认 ~/.cc-switch/cc-switch.db）
+#   DD_SWITCH_ROUTE_APP          应用类型（默认 claude）
+#   DD_SWITCH_ROUTE_PORT         监听端口（默认 9301）
+
+ROUTE_BASE_URL = "http://127.0.0.1:9301"
+ROUTE_PORT = int(os.environ.get("DD_SWITCH_ROUTE_PORT", "9301") or "9301")
+ROUTE_STATE_DIR = Path.home() / ".config" / "dd-switch"
+ROUTE_STATE_FILE = ROUTE_STATE_DIR / "route-state.json"
+ROUTE_LOG_FILE = ROUTE_STATE_DIR / "route.log"
+ROUTE_ENABLED = os.environ.get("DD_SWITCH_ROUTE_ENABLED", "").lower() in ("1", "true", "yes")
+ROUTE_PROXY_BIN = os.environ.get("DD_SWITCH_ROUTE_PROXY_BIN", "cc-switch-proxy")
+ROUTE_DB = os.environ.get("DD_SWITCH_ROUTE_DB", str(Path.home() / ".cc-switch" / "cc-switch.db"))
+ROUTE_APP = os.environ.get("DD_SWITCH_ROUTE_APP", "claude")
+ROUTE_START_TIMEOUT = 30  # 等待 /health 就绪的秒数
+ROUTE_STOP_TIMEOUT = 10   # SIGTERM 后等待进程退出的秒数
+
+# 代理契约里的稳定模型别名：客户端只看到这几个名字，真实模型由代理按供应商映射。
+ROUTE_ALIASES = {
+    "haiku": "claude-haiku-5-5",
+    "sonnet": "claude-sonnet-5",
+    "opus": "claude-opus-5",
+}
+# 代理不校验进来的凭据；Claude Code 需要一个非空 token，写占位符即可。
+ROUTE_TOKEN_PLACEHOLDER = "PROXY_MANAGED"
+
+# 本功能写入/恢复的 env 键；其余 env 与非 env 字段一概不动。
+MANAGED_ENV_KEYS = [
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+]
+
+_SECRET_ENV_RE = re.compile(r"TOKEN|KEY|SECRET|PASSWORD|PASSWD|CREDENTIAL", re.I)
+
+_route_lock = threading.Lock()
+
+
+class RouteError(Exception):
+    """Local-routing operation failed; message is safe to show in the UI."""
+
+
+def _proxy_path():
+    """Resolve the cc-switch-proxy executable (PATH first, then literal)."""
+    return shutil.which(ROUTE_PROXY_BIN) or ROUTE_PROXY_BIN
+
+
+def route_missing_config():
+    """Names of unset options — labels only, never values."""
+    missing = []
+    if not ROUTE_ENABLED:
+        missing.append("DD_SWITCH_ROUTE_ENABLED")
+    if not (shutil.which(ROUTE_PROXY_BIN) or Path(ROUTE_PROXY_BIN).exists()):
+        missing.append("DD_SWITCH_ROUTE_PROXY_BIN")
+    return missing
+
+
+def route_supported():
+    return not route_missing_config()
+
+
+def _route_state():
+    """Return the route state dict, or None when routing is not started."""
+    if not ROUTE_STATE_FILE.exists():
+        return None
+    try:
+        data = read_json(ROUTE_STATE_FILE)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def _write_route_state(state):
+    ROUTE_STATE_DIR.mkdir(parents=True, exist_ok=True)
+    write_json_atomic(ROUTE_STATE_FILE, state)
+    os.chmod(ROUTE_STATE_FILE, 0o600)
+
+
+def _pid_is_ours(pid):
+    """True when pid is a live cc-switch-proxy we started (not a reused PID)."""
+    if not pid:
+        return False
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().decode("utf-8", "replace")
+    except OSError:
+        return False
+    return Path(ROUTE_PROXY_BIN).name in cmdline
+
+
+def _route_process_alive(pid):
+    return _pid_is_ours(pid)
+
+
+def _start_route_process():
+    """Spawn cc-switch-proxy detached. Returns its PID."""
+    ROUTE_STATE_DIR.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        _proxy_path(), "--db", ROUTE_DB,
+        "--host", "127.0.0.1", "--port", str(ROUTE_PORT),
+    ]
+    log = open(ROUTE_LOG_FILE, "ab")
+    try:
+        proc = subprocess.Popen(
+            cmd, env=os.environ.copy(),
+            stdout=log, stderr=log, start_new_session=True,
+        )
+    finally:
+        log.close()
+    return proc.pid
+
+
+def _stop_route_process(pid):
+    """Terminate the process group we started. True when it is gone."""
+    if not _pid_is_ours(pid):
+        return True
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except OSError:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            return True
+    deadline = time.time() + ROUTE_STOP_TIMEOUT
+    while time.time() < deadline:
+        if not _pid_is_ours(pid):
+            return True
+        time.sleep(0.2)
+    for killer in (os.killpg, os.kill):
+        try:
+            killer(pid, signal.SIGKILL)
+        except OSError:
+            pass
+    return not _pid_is_ours(pid)
+
+
+def _route_ready():
+    """True when the proxy answers /health."""
+    req = urllib.request.Request(ROUTE_BASE_URL + "/health")
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        return resp.status == 200
+
+
+def _wait_route_ready(pid):
+    deadline = time.time() + ROUTE_START_TIMEOUT
+    last = None
+    while time.time() < deadline:
+        if not _route_process_alive(pid):
+            raise RouteError("cc-switch-proxy 进程启动后即退出，详见 route 日志")
+        try:
+            if _route_ready():
+                return
+        except Exception as e:
+            last = e
+        time.sleep(1)
+    raise RouteError(f"cc-switch-proxy 启动超时: {last or '/health 不可达'}")
+
+
+def _proxy_cli(subargs, timeout=20):
+    """Run `cc-switch-proxy provider …` and return the parsed JSON output."""
+    cmd = [_proxy_path(), "provider"] + subargs + ["--db", ROUTE_DB, "--app", ROUTE_APP]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except Exception as e:
+        raise RouteError(f"调用 cc-switch-proxy 失败: {e}")
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        raise RouteError(f"供应商操作失败: {detail or f'exit {proc.returncode}'}")
+    lines = [ln for ln in proc.stdout.strip().splitlines() if ln.strip()]
+    if not lines:
+        raise RouteError("cc-switch-proxy 未返回结果")
+    try:
+        return json.loads(lines[-1])
+    except Exception:
+        raise RouteError("cc-switch-proxy 返回了无法解析的输出")
+
+
+def route_providers():
+    """List providers (tokens masked) plus the current one."""
+    data = _proxy_cli(["list"])
+    for provider in data.get("providers", []):
+        env = (provider.get("settingsConfig") or {}).get("env") or {}
+        for key in list(env):
+            if _SECRET_ENV_RE.search(key) and env[key]:
+                env[key] = "***"
+    return data
+
+
+def route_provider_save(payload):
+    """Add or update a provider. `id` present → update, else add."""
+    args = ["update", "--id", payload["id"]] if payload.get("id") else ["add"]
+    for flag, key in (
+        ("name", "name"), ("base-url", "base_url"), ("token", "token"),
+        ("model", "model"), ("haiku", "haiku"), ("sonnet", "sonnet"), ("opus", "opus"),
+    ):
+        value = payload.get(key)
+        if value is not None:
+            args += [f"--{flag}", str(value)]
+    if payload.get("set_current"):
+        args += ["--set-current"]
+    return _proxy_cli(args)
+
+
+def route_provider_delete(provider_id):
+    return _proxy_cli(["delete", "--id", provider_id])
+
+
+def route_provider_set_current(provider_id):
+    return _proxy_cli(["set-current", "--id", provider_id])
+
+
+def route_provider_import(directory, set_current=False):
+    args = ["import", "--dir", directory]
+    if set_current:
+        args += ["--set-current"]
+    return _proxy_cli(args, timeout=60)
+
+
+def _snapshot_managed_env(settings_env):
+    original = {}
+    for key in MANAGED_ENV_KEYS:
+        if key in settings_env:
+            original[key] = {"present": True, "value": settings_env[key]}
+        else:
+            original[key] = {"present": False}
+    return original
+
+
+def _apply_route_env(settings):
+    env = dict(settings.get("env") or {})
+    env["ANTHROPIC_BASE_URL"] = ROUTE_BASE_URL
+    env["ANTHROPIC_AUTH_TOKEN"] = ROUTE_TOKEN_PLACEHOLDER
+    env["ANTHROPIC_MODEL"] = ROUTE_ALIASES["sonnet"]
+    env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = ROUTE_ALIASES["haiku"]
+    env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = ROUTE_ALIASES["opus"]
+    env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = ROUTE_ALIASES["sonnet"]
+    # *_MODEL_NAME 只是显示用别名：原本有才更新，避免引入非本项目的约定。
+    for key, tier in (
+        ("ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME", "haiku"),
+        ("ANTHROPIC_DEFAULT_OPUS_MODEL_NAME", "opus"),
+        ("ANTHROPIC_DEFAULT_SONNET_MODEL_NAME", "sonnet"),
+    ):
+        if key in env:
+            env[key] = ROUTE_ALIASES[tier]
+    settings["env"] = env
+
+
+def _restore_managed_env(settings, original):
+    env = dict(settings.get("env") or {})
+    for key, entry in (original or {}).items():
+        if entry.get("present"):
+            env[key] = entry["value"]
+        else:
+            env.pop(key, None)
+    settings["env"] = env
+
+
+def _backup_settings():
+    if CLAUDE_CONFIG.exists():
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        shutil.copy2(CLAUDE_CONFIG, CLAUDE_CONFIG.with_name(f"settings.json.bak.{ts}"))
+
+
+def _mask_secret_env(env):
+    masked = {}
+    for key, val in env.items():
+        if _SECRET_ENV_RE.search(key) and isinstance(val, str) and val:
+            masked[key] = "***"
+        else:
+            masked[key] = val
+    return masked
+
+
+def _find_active_profile(env):
+    for f in sorted(CONFIG_DIR.glob("*.json")):
+        if f.name == "sample.json":
+            continue
+        try:
+            data = read_json(f)
+        except Exception:
+            continue
+        if data.get("env") == env:
+            return f.name
+    return None
+
+
+def route_status():
+    state = _route_state()
+    active = state is not None
+    running = _route_process_alive(state.get("pid")) if active else False
+    return {
+        "supported": route_supported(),
+        "missing": route_missing_config(),
+        "active": active,
+        "applied": bool(state.get("applied")) if active else False,
+        "running": running,
+        "provider": state.get("provider") if active else None,
+    }
+
+
+def route_start():
+    if not route_supported():
+        raise RouteError("本地路由功能未启用或缺少配置")
+
+    providers = _proxy_cli(["list"])
+    if not providers.get("current"):
+        raise RouteError("请先在下方添加并选择一个供应商，再开启路由")
+
+    state = _route_state()
+    if state is not None:
+        if _route_process_alive(state.get("pid")):
+            raise RouteError("本地路由已处于启用状态")
+        # 进程已退出（例如重启过主机）：只重新拉起进程，不重做快照
+        pid = _spawn_route()
+        try:
+            _wait_route_ready(pid)
+        except Exception:
+            _stop_route_process(pid)
+            raise
+        state["pid"] = pid
+        _write_route_state(state)
+        return {"provider": state.get("provider")}
+
+    pid = _spawn_route()
+    try:
+        _wait_route_ready(pid)
+    except Exception:
+        # 就绪失败：结束本次启动的进程，不留半开状态
+        _stop_route_process(pid)
+        raise
+
+    current = read_json(CLAUDE_CONFIG) if CLAUDE_CONFIG.exists() else {}
+    env = current.get("env") or {}
+    state = {
+        "version": 2,
+        "started_at": int(time.time()),
+        "pid": pid,
+        "applied": False,
+        "provider": providers.get("current"),
+        "env_existed": "env" in current,
+        "original_env": _snapshot_managed_env(env),
+    }
+    _write_route_state(state)
+    return {"provider": state.get("provider")}
+
+
+def _spawn_route():
+    try:
+        return _start_route_process()
+    except Exception as e:
+        raise RouteError(f"启动 cc-switch-proxy 失败: {e}")
+
+
+def route_apply():
+    state = _route_state()
+    if state is None:
+        raise RouteError("本地路由未启用")
+    if not _route_process_alive(state.get("pid")):
+        raise RouteError("cc-switch-proxy 进程未运行，请重新开启路由")
+
+    providers = _proxy_cli(["list"])
+    current = providers.get("current")
+    if not current:
+        raise RouteError("当前没有选中的供应商，无法应用")
+
+    current = read_json(CLAUDE_CONFIG) if CLAUDE_CONFIG.exists() else {}
+    _backup_settings()
+    settings = dict(current)
+    _apply_route_env(settings)
+    write_json_atomic(CLAUDE_CONFIG, settings)
+
+    state["applied"] = True
+    state["provider"] = providers.get("current")
+    _write_route_state(state)
+    return {"provider": state["provider"]}
+
+
+def route_stop():
+    state = _route_state()
+    if state is None:
+        raise RouteError("本地路由未启用")
+
+    # 先恢复 settings，成功后才结束进程/删状态，失败可原样重试
+    if state.get("applied") and CLAUDE_CONFIG.exists():
+        current = read_json(CLAUDE_CONFIG)
+        _backup_settings()
+        restored = dict(current)
+        if state.get("env_existed", True):
+            _restore_managed_env(restored, state.get("original_env") or {})
+        else:
+            restored.pop("env", None)
+        write_json_atomic(CLAUDE_CONFIG, restored)
+
+    if not _stop_route_process(state.get("pid")):
+        raise RouteError("无法结束 cc-switch-proxy 进程，请检查进程状态后重试")
+
+    try:
+        os.remove(ROUTE_STATE_FILE)
+    except FileNotFoundError:
+        pass
+    return {"stopped": True}
+
+
 # --- Routes ---
 
 @app.route("/login", methods=["GET", "POST"])
@@ -313,7 +735,16 @@ def api_current():
     summary = get_current_summary()
     if summary is None:
         return jsonify({"exists": False, "message": "~/.claude/settings.json 不存在"})
-    return jsonify({"exists": True, **summary})
+    env = summary["env"]
+    # 在服务端做 profile 匹配，然后脱敏凭据，浏览器不需要拿到真实密钥
+    return jsonify({
+        "exists": True,
+        "path": summary["path"],
+        "env": _mask_secret_env(env),
+        "other_fields": summary["other_fields"],
+        "active_profile": _find_active_profile(env),
+        "route": route_status(),
+    })
 
 
 @app.route("/api/switch", methods=["POST"])
@@ -329,12 +760,144 @@ def api_switch():
     if not path.exists():
         return jsonify({"error": f"配置文件 {name} 不存在"}), 404
 
+    with _route_lock:
+        if _route_state() is not None:
+            return jsonify({"error": "本地路由启用中，请先关闭路由再切换配置"}), 409
+        try:
+            do_switch(path)
+            summary = get_current_summary()
+            return jsonify({"message": f"已切换为 {name}", "current": {"path": summary["path"], "env": _mask_secret_env(summary["env"]), "other_fields": summary["other_fields"]}})
+        except Exception as e:
+            return jsonify({"error": f"切换失败: {e}"}), 500
+
+
+# --- Local routing API ---
+
+@app.route("/api/route/status")
+@login_required
+def api_route_status():
+    return jsonify(route_status())
+
+
+@app.route("/api/route/providers")
+@login_required
+def api_route_providers():
     try:
-        do_switch(path)
-        summary = get_current_summary()
-        return jsonify({"message": f"已切换为 {name}", "current": {"path": summary["path"], "env": summary["env"], "other_fields": summary["other_fields"]}})
+        return jsonify(route_providers())
+    except RouteError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
-        return jsonify({"error": f"切换失败: {e}"}), 500
+        return jsonify({"error": f"读取供应商失败: {e}"}), 500
+
+
+@app.route("/api/route/providers", methods=["POST"])
+@login_required
+def api_route_provider_save():
+    body = request.get_json(force=True) or {}
+    payload = {
+        "id": (body.get("id") or "").strip() or None,
+        "name": (body.get("name") or "").strip(),
+        "base_url": (body.get("base_url") or "").strip(),
+        "model": (body.get("model") or "").strip(),
+        "haiku": (body.get("haiku") or "").strip(),
+        "sonnet": (body.get("sonnet") or "").strip(),
+        "opus": (body.get("opus") or "").strip(),
+        "set_current": bool(body.get("set_current")),
+    }
+    # token 只在用户填写时传递（列表里是掩码，不能回写）。
+    token = body.get("token")
+    if isinstance(token, str) and token.strip():
+        payload["token"] = token.strip()
+    if not payload["id"] and not payload["name"]:
+        return jsonify({"error": "供应商名称必填"}), 400
+    with _route_lock:
+        try:
+            return jsonify(route_provider_save(payload))
+        except RouteError as e:
+            return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            return jsonify({"error": f"保存供应商失败: {e}"}), 500
+
+
+@app.route("/api/route/providers/delete", methods=["POST"])
+@login_required
+def api_route_provider_delete():
+    body = request.get_json(force=True) or {}
+    provider_id = (body.get("id") or "").strip()
+    if not provider_id:
+        return jsonify({"error": "缺少供应商 id"}), 400
+    with _route_lock:
+        try:
+            return jsonify(route_provider_delete(provider_id))
+        except RouteError as e:
+            return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            return jsonify({"error": f"删除供应商失败: {e}"}), 500
+
+
+@app.route("/api/route/providers/current", methods=["POST"])
+@login_required
+def api_route_provider_current():
+    body = request.get_json(force=True) or {}
+    provider_id = (body.get("id") or "").strip()
+    if not provider_id:
+        return jsonify({"error": "缺少供应商 id"}), 400
+    with _route_lock:
+        try:
+            return jsonify(route_provider_set_current(provider_id))
+        except RouteError as e:
+            return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            return jsonify({"error": f"切换供应商失败: {e}"}), 500
+
+
+@app.route("/api/route/providers/import", methods=["POST"])
+@login_required
+def api_route_provider_import():
+    body = request.get_json(force=True) or {}
+    with _route_lock:
+        try:
+            return jsonify(route_provider_import(str(CONFIG_DIR), bool(body.get("set_current"))))
+        except RouteError as e:
+            return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            return jsonify({"error": f"导入供应商失败: {e}"}), 500
+
+
+@app.route("/api/route/start", methods=["POST"])
+@login_required
+def api_route_start():
+    with _route_lock:
+        try:
+            return jsonify(route_start())
+        except RouteError as e:
+            return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            return jsonify({"error": f"开启路由失败: {e}"}), 500
+
+
+@app.route("/api/route/apply", methods=["POST"])
+@login_required
+def api_route_apply():
+    with _route_lock:
+        try:
+            return jsonify(route_apply())
+        except RouteError as e:
+            return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            return jsonify({"error": f"应用路由失败: {e}"}), 500
+
+
+@app.route("/api/route/stop", methods=["POST"])
+@login_required
+def api_route_stop():
+    with _route_lock:
+        try:
+            return jsonify(route_stop())
+        except RouteError as e:
+            return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            return jsonify({"error": f"关闭路由失败: {e}"}), 500
 
 
 # --- Server Management ---

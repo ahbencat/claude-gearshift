@@ -186,6 +186,22 @@
 
   <!-- main -->
   <div class="main">
+    <div class="current-card" id="routeCard" style="display:none">
+      <h3 data-i18n="routeTitle">本地路由（cc-switch-proxy）</h3>
+      <div id="routeStatusLine" style="font-size:13px;margin-bottom:10px;color:var(--muted)"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+        <button class="btn btn-sm btn-primary" id="btnRouteStart" onclick="routeStart()" data-i18n="routeStart">▶ 开启路由</button>
+        <button class="btn btn-sm btn-danger" id="btnRouteStop" onclick="routeStop()" style="display:none" data-i18n="routeStop">■ 关闭路由</button>
+        <button class="btn btn-sm btn-success" id="btnRouteApply" onclick="routeApply()" style="display:none" data-i18n="routeApply">💾 应用到 Claude Code</button>
+        <button class="btn btn-sm" onclick="routeImport()" data-i18n="routeImport">⬇ 从 config/ 导入</button>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <strong style="font-size:13px" data-i18n="routeProviders">供应商</strong>
+        <button class="btn btn-sm" onclick="openProviderForm()" data-i18n="routeAddProvider">＋ 添加供应商</button>
+      </div>
+      <div id="routeProviderList" style="font-size:13px"></div>
+    </div>
+
     <div class="current-card" id="currentCard">
       <h3 data-i18n="currentConfig">当前使用中的配置</h3>
       <div id="currentInfo" data-i18n="loading">加载中...</div>
@@ -255,6 +271,32 @@
   </div>
 </div>
 
+<!-- provider modal (local routing) -->
+<div class="modal-overlay" id="providerModal">
+  <div class="modal" style="max-width:640px">
+    <h3 id="providerModalTitle" data-i18n="routeAddProvider">添加供应商</h3>
+    <input type="hidden" id="rpId" />
+    <input type="text" id="rpName" data-i18n-placeholder="routeName" placeholder="名称" style="width:100%;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px;margin-bottom:8px" />
+    <input type="text" id="rpBaseUrl" placeholder="Base URL（https://…）" style="width:100%;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px;margin-bottom:8px" />
+    <input type="password" id="rpToken" data-i18n-placeholder="routeTokenHint" placeholder="凭据 Token（留空表示不修改）" style="width:100%;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px;margin-bottom:8px" />
+    <div style="display:flex;gap:8px;margin-bottom:8px">
+      <input type="text" id="rpModel" placeholder="默认 Model" style="flex:1;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px" />
+      <input type="text" id="rpHaiKu" placeholder="Haiku 档" style="flex:1;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px" />
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:8px">
+      <input type="text" id="rpSonnet" placeholder="Sonnet 档" style="flex:1;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px" />
+      <input type="text" id="rpOpus" placeholder="Opus 档" style="flex:1;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px" />
+    </div>
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin-bottom:12px">
+      <input type="checkbox" id="rpSetCurrent" /> <span data-i18n="routeSetCurrent">设为当前供应商</span>
+    </label>
+    <div class="btns">
+      <button class="btn" onclick="closeProviderForm()" data-i18n="cancel">取消</button>
+      <button class="btn btn-primary" onclick="saveProvider()" data-i18n="save">保存</button>
+    </div>
+  </div>
+</div>
+
 <!-- toast -->
 <div class="toast" id="toast"></div>
 
@@ -298,12 +340,214 @@ async function api(method, path, body) {
 }
 
 // --- Load ---
+let routeActive = false;
+let routeApplied = false;
+
 async function loadAll() {
   if (currentServer === "local") {
-    await Promise.all([loadConfigs(), loadCurrent()]);
+    await Promise.all([loadConfigs(), loadCurrent(), loadRoute()]);
   } else {
+    routeActive = false;
+    document.getElementById("routeCard").style.display = "none";
     await Promise.all([loadRemoteConfigs(currentServer), loadRemoteCurrent(currentServer)]);
   }
+}
+
+// --- Local routing (cc-switch-proxy) ---
+let routeProviders = [];
+let routeCurrent = null;
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, c => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+  ));
+}
+
+async function loadRoute() {
+  try {
+    const [status, providers] = await Promise.all([
+      api("GET", "api/route/status"),
+      api("GET", "api/route/providers"),
+    ]);
+    renderRoute(status);
+    renderProviders(providers);
+  } catch (e) {
+    document.getElementById("routeCard").style.display = "none";
+  }
+}
+
+function renderRoute(data) {
+  const card = document.getElementById("routeCard");
+  const line = document.getElementById("routeStatusLine");
+  const btnStart = document.getElementById("btnRouteStart");
+  const btnStop = document.getElementById("btnRouteStop");
+  const btnApply = document.getElementById("btnRouteApply");
+  card.style.display = "block";
+
+  if (!data.supported) {
+    const missing = (data.missing || []).join(", ");
+    line.textContent = missing ? `${t("routeDisabled")}: ${missing}` : t("routeDisabled");
+    btnStart.style.display = "none";
+    btnStop.style.display = "none";
+    btnApply.style.display = "none";
+    return;
+  }
+  if (!data.active) {
+    line.textContent = t("routeInactive");
+    btnStart.style.display = "inline-block";
+    btnStop.style.display = "none";
+    btnApply.style.display = "none";
+    return;
+  }
+  line.innerHTML = `<span class="badge ${data.running ? "badge-ok" : "badge-err"}">${data.running ? t("routeRunning") : t("routeNotRunning")}</span> `
+    + `<span class="badge ${data.applied ? "badge-ok" : "badge-err"}">${data.applied ? t("routeApplied") : t("routeNotApplied")}</span> `
+    + `<span style="margin-left:8px">${t("routeLockHint")}</span>`;
+  btnStart.style.display = "none";
+  btnStop.style.display = "inline-block";
+  btnApply.style.display = "inline-block";
+}
+
+function renderProviders(data) {
+  routeProviders = data.providers || [];
+  routeCurrent = data.current || null;
+  const el = document.getElementById("routeProviderList");
+  if (!routeProviders.length) {
+    el.innerHTML = `<div class="empty">${t("routeNoProviders")}</div>`;
+    return;
+  }
+  let html = "";
+  for (const p of routeProviders) {
+    const env = (p.settingsConfig && p.settingsConfig.env) || {};
+    const isCurrent = p.id === routeCurrent;
+    html += `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">
+      <span class="server-badge ${isCurrent ? "" : "local"}">${isCurrent ? t("routeCurrent") : t("routeNotCurrent")}</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:500">${esc(p.name)}</div>
+        <div style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(env.ANTHROPIC_BASE_URL || "")}</div>
+      </div>
+      <button class="btn btn-sm" onclick="setCurrentProvider('${esc(p.id)}')"${isCurrent ? " disabled" : ""}>${t("routeUse")}</button>
+      <button class="btn btn-sm" onclick="editProvider('${esc(p.id)}')">${t("routeEdit")}</button>
+      <button class="btn btn-sm btn-danger" onclick="deleteProvider('${esc(p.id)}')">${t("routeDelete")}</button>
+    </div>`;
+  }
+  el.innerHTML = html;
+}
+
+function openProviderForm(provider) {
+  document.getElementById("providerModalTitle").textContent = provider ? t("routeEditProvider") : t("routeAddProvider");
+  document.getElementById("rpId").value = provider ? provider.id : "";
+  document.getElementById("rpName").value = provider ? provider.name : "";
+  const env = provider ? ((provider.settingsConfig || {}).env || {}) : {};
+  document.getElementById("rpBaseUrl").value = env.ANTHROPIC_BASE_URL || "";
+  document.getElementById("rpToken").value = "";
+  document.getElementById("rpModel").value = env.ANTHROPIC_MODEL || "";
+  document.getElementById("rpHaiKu").value = env.ANTHROPIC_DEFAULT_HAIKU_MODEL || "";
+  document.getElementById("rpSonnet").value = env.ANTHROPIC_DEFAULT_SONNET_MODEL || "";
+  document.getElementById("rpOpus").value = env.ANTHROPIC_DEFAULT_OPUS_MODEL || "";
+  document.getElementById("rpSetCurrent").checked = !provider;
+  document.getElementById("providerModal").classList.add("show");
+}
+
+function closeProviderForm() {
+  document.getElementById("providerModal").classList.remove("show");
+}
+
+function editProvider(id) {
+  const p = routeProviders.find(x => x.id === id);
+  if (p) openProviderForm(p);
+}
+
+async function saveProvider() {
+  const body = {
+    id: document.getElementById("rpId").value || null,
+    name: document.getElementById("rpName").value.trim(),
+    base_url: document.getElementById("rpBaseUrl").value.trim(),
+    token: document.getElementById("rpToken").value.trim(),
+    model: document.getElementById("rpModel").value.trim(),
+    haiku: document.getElementById("rpHaiKu").value.trim(),
+    sonnet: document.getElementById("rpSonnet").value.trim(),
+    opus: document.getElementById("rpOpus").value.trim(),
+    set_current: document.getElementById("rpSetCurrent").checked,
+  };
+  if (!body.name) { toast(t("routeNameRequired"), "error"); return; }
+  try {
+    await api("POST", "api/route/providers", body);
+    toast(t("routeProviderSaved"), "success");
+    closeProviderForm();
+    await loadRoute();
+  } catch (e) {
+    toast(`❌ ${translateError(e.message)}`, "error");
+  }
+}
+
+async function deleteProvider(id) {
+  if (!confirm(t("routeConfirmDelete"))) return;
+  try {
+    await api("POST", "api/route/providers/delete", { id });
+    await loadRoute();
+  } catch (e) {
+    toast(`❌ ${translateError(e.message)}`, "error");
+  }
+}
+
+async function setCurrentProvider(id) {
+  try {
+    await api("POST", "api/route/providers/current", { id });
+    await loadRoute();
+  } catch (e) {
+    toast(`❌ ${translateError(e.message)}`, "error");
+  }
+}
+
+async function routeImport() {
+  if (!confirm(t("routeConfirmImport"))) return;
+  try {
+    const r = await api("POST", "api/route/providers/import", { set_current: false });
+    toast(t("routeImported", (r.imported || []).length), "success");
+    await loadRoute();
+  } catch (e) {
+    toast(`❌ ${translateError(e.message)}`, "error");
+  }
+}
+
+async function routeStart() {
+  const btn = document.getElementById("btnRouteStart");
+  btn.disabled = true; btn.textContent = t("routeStarting");
+  try {
+    await api("POST", "api/route/start");
+    toast(t("routeStarted"), "success");
+    await loadRoute();
+    await loadCurrent();
+  } catch (e) {
+    toast(`❌ ${translateError(e.message)}`, "error");
+  }
+  btn.disabled = false; btn.textContent = t("routeStart");
+}
+
+async function routeApply() {
+  try {
+    await api("POST", "api/route/apply");
+    toast(t("routeAppliedMsg"), "success");
+    await loadRoute();
+    await loadCurrent();
+  } catch (e) {
+    toast(`❌ ${translateError(e.message)}`, "error");
+  }
+}
+
+async function routeStop() {
+  if (!confirm(t("routeConfirmStop"))) return;
+  const btn = document.getElementById("btnRouteStop");
+  btn.disabled = true;
+  try {
+    await api("POST", "api/route/stop");
+    toast(t("routeStopped"), "success");
+    await loadRoute();
+    await loadCurrent();
+  } catch (e) {
+    toast(`❌ ${translateError(e.message)}`, "error");
+  }
+  btn.disabled = false;
 }
 
 async function loadConfigs() {
@@ -379,18 +623,8 @@ async function loadCurrent() {
     otherHtml += `<div style="margin-top:8px;font-size:12px;color:var(--muted)">📁 ${data.path}</div>`;
     otherEl.innerHTML = otherHtml;
 
-    // try to guess which config matches
-    if (env) {
-      for (const c of configs) {
-        try {
-          const cd = await api("GET", `api/configs/${c.name}`);
-          if (cd.content && cd.content.env && JSON.stringify(cd.content.env) === JSON.stringify(env)) {
-            currentName = c.name;
-            break;
-          }
-        } catch {}
-      }
-    }
+    // 服务端已经算好当前 profile（路由开启时不会匹配到任何配置档）
+    currentName = data.active_profile || null;
     renderSidebar();
   } catch (e) {
     document.getElementById("currentInfo").textContent = `${t("readFailed")}: ${translateError(e.message)}`;
@@ -426,7 +660,8 @@ async function selectConfig(name) {
     const editor = document.getElementById("editor");
     editor.value = JSON.stringify(data.content, null, 2);
     editor.readOnly = false;
-    document.getElementById("btnSwitch").style.display = "inline-block";
+    // 路由开启期间不允许切换到配置档（会覆盖路由快照）
+    document.getElementById("btnSwitch").style.display = (currentServer === "local" && routeActive) ? "none" : "inline-block";
     document.getElementById("btnSave").style.display = "none";
     document.getElementById("jsonError").classList.remove("show");
     renderSidebar();
@@ -439,6 +674,10 @@ async function selectConfig(name) {
 let switchingName = null;
 function confirmSwitch() {
   if (!currentName) return;
+  if (currentServer === "local" && routeActive) {
+    toast(t("errRouteActive"), "error");
+    return;
+  }
   switchingName = currentName;
   document.getElementById("confirmMsg").textContent = t("confirmMsg", currentName);
   document.getElementById("confirmModal").classList.add("show");
