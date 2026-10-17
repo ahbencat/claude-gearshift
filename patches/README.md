@@ -59,8 +59,28 @@ binary (≈13 MB), so you can skip the Rust toolchain entirely:
 
 - **Platform**: Linux x86_64, glibc.
 - **Runtime**: still needs the WebKitGTK 4.1 / GTK 3 runtime libraries, because it
-  links cc-switch's crate. Install them first, e.g. on Debian/Ubuntu:
-  `sudo apt-get install libwebkit2gtk-4.1-0 libgtk-3-0 libsoup-3.0-0`.
+  links cc-switch's crate (`cc_switch_lib` → Tauri). On a minimal host the missing
+  pieces are `libwebkit2gtk-4.1.so.0` and `libjavascriptcoregtk-4.1.so.0` plus their
+  deps (`libgstgl-1.0`, `libwebpdemux`, `libharfbuzz-icu`, `libmanette-0.2`,
+  `libenchant-2`, `libhyphen`, `libsecret-1`, and the mesa/egl/gbm + dictionaries
+  packages). Install them with:
+  `sudo apt-get install libwebkit2gtk-4.1-0` (pulls GTK 3, libsoup 3, and the rest).
+  Without root, extract the runtime `.deb`s into a directory and point the daemon at
+  them with `LD_LIBRARY_PATH` (the deployment under `~/deploy` keeps them in
+  `runtime-libs/`):
+  ```bash
+  mkdir -p ~/deploy/runtime-libs && cd ~/deploy/runtime-libs
+  apt-get download $(apt-get --print-uris -y install --no-install-recommends \
+    libwebkit2gtk-4.1-0 | grep "^'" | awk -F"'" '{print $2}' | xargs -n1 basename | sed 's/_.*//')
+  for f in *.deb; do dpkg-deb -x "$f" .; done && rm -f *.deb
+  export LD_LIBRARY_PATH=$HOME/deploy/runtime-libs/usr/lib/x86_64-linux-gnu
+  ```
+- **Compile-time**: needs the full Tauri Linux prerequisites (WebKitGTK/GTK **dev**
+  packages), because the proxy links the whole `cc_switch_lib` crate. This is a
+  Tauri requirement, **not** OAuth.
+- **OAuth**: login-based providers (GitHub Copilot, ChatGPT/Codex, xAI) need the
+  cc-switch **desktop** app — the headless daemon has no `AppHandle`, so only
+  API-key providers (Anthropic, OpenAI-compatible, Gemini, OpenRouter, …) work.
 - **License**: it is a build of cc-switch (MIT © 2025 Jason Young); see
   [`LICENSE.cc-switch`](LICENSE.cc-switch). Redistribution must keep that notice.
 - **Keep it in sync**: the binary is a build of the patch at the pinned commit.

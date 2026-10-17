@@ -141,6 +141,19 @@ systemctl --user restart dd-switch
 - Get `cc-switch-proxy` first: use the prebuilt binary in `patches/bin/`
   (Linux x86_64; needs the WebKitGTK runtime) or build it — see
   [`patches/README.md`](patches/README.md).
+- **Runtime libraries** — the binary links cc-switch's Tauri/WebKitGTK stack, so a
+  minimal host needs the WebKitGTK 4.1 runtime. Simplest:
+  `sudo apt-get install libwebkit2gtk-4.1-0` (pulls GTK 3, libsoup 3, and the rest).
+  Without root, extract the runtime `.deb`s into a directory and point the daemon at
+  them with `LD_LIBRARY_PATH`; the recipe is in
+  [`patches/README.md`](patches/README.md#prebuilt-binary).
+- **Compile-time** — building it needs the full Tauri Linux prerequisites
+  (WebKitGTK/GTK **dev** packages), because the proxy links the whole
+  `cc_switch_lib` crate. That is a Tauri requirement, **not** OAuth.
+- **OAuth** — login-based providers (GitHub Copilot, ChatGPT/Codex, xAI) only work
+  through the cc-switch **desktop** app; the headless daemon has no `AppHandle`, so
+  it supports API-key providers (Anthropic, OpenAI-compatible, Gemini, OpenRouter,
+  …) only.
 - The binary is resolved from `PATH` (or `DD_SWITCH_ROUTE_PROXY_BIN`) — use
   whatever environment you would normally launch it in.
 - Provider tokens land in cc-switch's DB (user-private) and are masked in every

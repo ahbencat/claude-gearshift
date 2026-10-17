@@ -131,6 +131,15 @@ systemctl --user restart dd-switch
 
 - 先拿到 `cc-switch-proxy`：用 `patches/bin/` 里的预编译二进制（Linux x86_64，需
   WebKitGTK 运行库），或自行构建——见 [`patches/README.md`](patches/README.md)。
+- **运行库** —— 该二进制链接 cc-switch 的 Tauri/WebKitGTK 栈，最简主机需要 WebKitGTK
+  4.1 运行库。最省事：`sudo apt-get install libwebkit2gtk-4.1-0`（会带上 GTK 3、
+  libsoup 3 等）。免 root 的做法：把运行库 `.deb` 解包到一个目录，再用 `LD_LIBRARY_PATH`
+  指过去；具体命令见 [`patches/README.md`](patches/README.md#prebuilt-binary)。
+- **编译期** —— 构建它需要完整的 Tauri Linux 前置（WebKitGTK/GTK **dev** 包），因为
+  proxy 链接的是整个 `cc_switch_lib` crate。这是 Tauri 的要求，**不是** OAuth。
+- **OAuth** —— 走登录授权的供应商（GitHub Copilot、ChatGPT/Codex、xAI）只能在
+  cc-switch **桌面端**里用；headless 守护进程没有 `AppHandle`，只支持 API Key 类
+  供应商（Anthropic、OpenAI 兼容、Gemini、OpenRouter 等）。
 - 可执行文件从 `PATH`（或 `DD_SWITCH_ROUTE_PROXY_BIN`）解析——用你平时启动它的
   那个环境即可。
 - 供应商凭据落在 cc-switch 的库里（用户私有），并在所有 API 响应中打码——不要写进
