@@ -1,0 +1,646 @@
+<title>GearShift 本地路由</title>
+<style>
+  :root {
+    --ground: #e8ecf1;
+    --surface: #f7f9fb;
+    --sunken: #dfe5ec;
+    --ink: #12171e;
+    --muted: #59636f;
+    --rule: #c3ccd6;
+    --accent: #1f4fbf;
+    --commit: #157247;
+    --rollback: #a92c22;
+
+    --font-serif: "IBM Plex Serif", "Noto Serif CJK SC", "Songti SC", Georgia, serif;
+    --font-sans: "IBM Plex Sans", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+      "Noto Sans CJK SC", system-ui, sans-serif;
+    --font-mono: "IBM Plex Mono", "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #12171e;
+      --surface: #1b222b;
+      --sunken: #0d1218;
+      --ink: #e7edf4;
+      --muted: #95a3b2;
+      --rule: #313b47;
+      --accent: #86abff;
+      --commit: #58c78e;
+      --rollback: #f28b81;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #12171e;
+    --surface: #1b222b;
+    --sunken: #0d1218;
+    --ink: #e7edf4;
+    --muted: #95a3b2;
+    --rule: #313b47;
+    --accent: #86abff;
+    --commit: #58c78e;
+    --rollback: #f28b81;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 16px;
+    line-height: 1.7;
+    margin: 0;
+    padding: 0 20px 96px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 860px;
+    margin: 0 auto;
+  }
+
+  /* ---- masthead ---- */
+  .masthead {
+    padding: 56px 0 32px;
+    border-bottom: 2px solid var(--ink);
+  }
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-family: var(--font-serif);
+    font-weight: 600;
+    font-size: clamp(30px, 5vw, 42px);
+    line-height: 1.18;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+    margin: 0 0 16px;
+  }
+  .standfirst {
+    max-width: 62ch;
+    font-size: 17px;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 28px;
+    margin-top: 24px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+  }
+  .meta b {
+    color: var(--ink);
+    font-weight: 600;
+  }
+
+  /* ---- sections ---- */
+  section {
+    padding: 52px 0 8px;
+    border-bottom: 1px solid var(--rule);
+  }
+  section:last-of-type { border-bottom: none; }
+
+  .sec-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 10px;
+  }
+  h2 {
+    font-family: var(--font-serif);
+    font-weight: 600;
+    font-size: 25px;
+    line-height: 1.3;
+    letter-spacing: -0.005em;
+    text-wrap: balance;
+    margin: 0 0 14px;
+  }
+  p { max-width: 64ch; margin: 0 0 16px; }
+  p:last-child { margin-bottom: 0; }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.875em;
+    background: var(--sunken);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: 1px 5px;
+  }
+
+  strong { font-weight: 600; }
+
+  /* ---- figures ---- */
+  figure {
+    margin: 28px 0 32px;
+    padding: 0;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    overflow-x: auto;
+  }
+  figure svg {
+    display: block;
+    width: 100%;
+    min-width: 640px;
+    height: auto;
+    color: var(--ink);
+    padding: 22px 8px;
+  }
+  figcaption {
+    border-top: 1px solid var(--rule);
+    padding: 12px 18px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.65;
+    letter-spacing: 0.02em;
+    color: var(--muted);
+    max-width: none;
+  }
+
+  /* ---- diagram primitives ---- */
+  .node {
+    fill: var(--surface);
+    stroke: var(--rule);
+    stroke-width: 1.5;
+  }
+  .node-dead {
+    fill: var(--ground);
+    stroke: var(--rollback);
+    stroke-width: 1.5;
+    stroke-dasharray: 5 4;
+  }
+  .node-done {
+    fill: var(--ground);
+    stroke: var(--commit);
+    stroke-width: 1.5;
+  }
+  .band {
+    fill: var(--sunken);
+    stroke: var(--accent);
+    stroke-width: 1.5;
+    stroke-dasharray: 2 3;
+  }
+  .node-label {
+    font-family: var(--font-sans);
+    font-size: 13px;
+    font-weight: 500;
+    fill: var(--ink);
+  }
+  .node-sub {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    fill: var(--muted);
+  }
+  .num {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    fill: var(--accent);
+  }
+  .num-dead { fill: var(--rollback); }
+  .dead-label {
+    font-family: var(--font-sans);
+    font-size: 11.5px;
+    fill: var(--rollback);
+  }
+  .band-label {
+    font-family: var(--font-sans);
+    font-size: 12px;
+    font-weight: 600;
+    fill: var(--accent);
+  }
+  .note {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    fill: var(--muted);
+  }
+  .edge {
+    stroke: var(--muted);
+    stroke-width: 1.5;
+    fill: none;
+  }
+  .edge-dead {
+    stroke: var(--rollback);
+    stroke-width: 1.5;
+    fill: none;
+    stroke-dasharray: 4 3;
+  }
+  .edge-live {
+    stroke: var(--commit);
+    stroke-width: 1.8;
+    fill: none;
+  }
+  .arrowhead { fill: var(--muted); }
+  .arrowhead-dead { fill: var(--rollback); }
+  .arrowhead-live { fill: var(--commit); }
+
+  /* ---- key list ---- */
+  .keys {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 18px;
+    margin: 24px 0 8px;
+  }
+  .keyblock {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    padding: 16px 18px;
+  }
+  .keyblock h3 {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin: 0 0 12px;
+    color: var(--muted);
+  }
+  .keyblock.touched h3 { color: var(--accent); }
+  .keyblock ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .keyblock li {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.5;
+    word-break: break-all;
+    color: var(--ink);
+  }
+  .keyblock.plain li { color: var(--muted); }
+
+  /* ---- takeaways ---- */
+  .rules {
+    list-style: none;
+    margin: 22px 0 8px;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    border-top: 1px solid var(--rule);
+  }
+  .rules li {
+    display: grid;
+    grid-template-columns: 88px 1fr;
+    gap: 18px;
+    padding: 15px 0;
+    border-bottom: 1px solid var(--rule);
+    align-items: baseline;
+  }
+  .rules .tag {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+    padding-top: 3px;
+  }
+  .rules .tag.warn { color: var(--rollback); }
+  .rules .tag.ok { color: var(--commit); }
+  .rules p { margin: 0; font-size: 15px; }
+
+  @media (max-width: 560px) {
+    body { padding: 0 16px 64px; }
+    .rules li { grid-template-columns: 1fr; gap: 6px; }
+    figure svg { min-width: 560px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <p class="eyebrow">Claude-GearShift · 本地路由</p>
+    <h1>GearShift 本地路由</h1>
+    <p class="standfirst">
+      dd-switch 把 Claude Code 指向一个本机按需拉起的 cc-switch-proxy 进程。供应商存在 cc-switch 的
+      SQLite 库里、由配置页维护；这一页画清它的完整生命周期：进程怎么起来、env 快照在什么时候拍、
+      关闭时按什么顺序还原，以及每一步失败会停在哪里。
+    </p>
+    <div class="meta">
+      <span><b>形态</b> 子进程 · 非服务</span>
+      <span><b>监听</b> 127.0.0.1:9301</span>
+      <span><b>状态</b> ~/.config/dd-switch/</span>
+      <span><b>影响面</b> 9 个 env 键</span>
+    </div>
+  </header>
+
+  <section>
+    <p class="sec-label">为什么要有这一跳</p>
+    <h2>请求路径：多出的一跳就是全部改动</h2>
+    <p>
+      直连时 Claude Code 自己打到供应商；开启路由后它只认本机的
+      <code>127.0.0.1:9301</code>，格式转换、档位映射、上游选择都交给 cc-switch-proxy。
+      配置里唯一变的就是 <code>ANTHROPIC_BASE_URL</code> 和凭据。
+    </p>
+
+    <figure>
+      <svg viewBox="0 0 820 268" role="img"
+           aria-label="对比图：关闭路由时 Claude Code 直接请求供应商 API；开启路由时 Claude Code 先请求本机 cc-switch-proxy 进程，由它转换格式后请求上游。">
+        <defs>
+          <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5"
+                  markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" class="arrowhead" />
+          </marker>
+          <marker id="a1l" viewBox="0 0 10 10" refX="9" refY="5"
+                  markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" class="arrowhead-live" />
+          </marker>
+        </defs>
+
+        <!-- row 1: direct -->
+        <text class="node-sub" x="24" y="34">关闭路由时</text>
+        <rect class="node" x="24" y="48" width="196" height="56" rx="3" />
+        <text class="node-label" x="122" y="81" text-anchor="middle">Claude Code</text>
+
+        <line class="edge" x1="220" y1="76" x2="316" y2="76" marker-end="url(#a1)" />
+        <text class="node-sub" x="268" y="66" text-anchor="middle">直连</text>
+
+        <rect class="node" x="322" y="48" width="212" height="56" rx="3" />
+        <text class="node-label" x="428" y="74" text-anchor="middle">供应商 API</text>
+        <text class="node-sub" x="428" y="92" text-anchor="middle">ANTHROPIC_BASE_URL</text>
+
+        <text class="node-sub" x="556" y="82">— 单跳，格式天然一致</text>
+
+        <!-- divider -->
+        <line class="edge" x1="24" y1="134" x2="796" y2="134"
+              stroke-dasharray="2 5" opacity="0.6" />
+
+        <!-- row 2: routed -->
+        <text class="node-sub" x="24" y="170">开启路由后</text>
+        <rect class="node" x="24" y="184" width="196" height="56" rx="3" />
+        <text class="node-label" x="122" y="217" text-anchor="middle">Claude Code</text>
+
+        <line class="edge-live" x1="220" y1="212" x2="306" y2="212" marker-end="url(#a1l)" />
+        <text class="node-sub" x="263" y="200" text-anchor="middle">Anthropic Messages</text>
+
+        <!-- the added hop -->
+        <rect class="band" x="312" y="184" width="196" height="56" rx="3" />
+        <text class="band-label" x="410" y="208" text-anchor="middle">cc-switch-proxy</text>
+        <text class="node-sub" x="410" y="226" text-anchor="middle">127.0.0.1:9301</text>
+
+        <line class="edge-live" x1="508" y1="212" x2="594" y2="212" marker-end="url(#a1l)" />
+        <text class="node-sub" x="551" y="188" text-anchor="middle">格式转换</text>
+        <text class="node-sub" x="551" y="201" text-anchor="middle">+ 档位映射</text>
+
+        <rect class="node" x="600" y="184" width="196" height="56" rx="3" />
+        <text class="node-label" x="698" y="217" text-anchor="middle">上游（任意格式）</text>
+      </svg>
+      <figcaption>
+        图 1 — 多出来的那一跳。虚线框是本地路由新增的组件；两跳的连线都是
+        live 语义（路由开启期间它们同时存在）。
+      </figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <p class="sec-label">生命周期</p>
+    <h2>从「开启」到「关闭」的每一步</h2>
+    <p>
+      主干是九步一条直线；所有失败都向右退出，<strong>失败路径不会留下半开状态</strong>：
+      要么进程没起来过，要么进程被杀掉并保留状态文件供重试。
+    </p>
+
+    <figure>
+      <svg viewBox="0 0 820 1058" role="img"
+           aria-label="本地路由生命周期流程图：读取配置、读状态文件、拉起 cc-switch-proxy、等待 /health 就绪、快照 env 键、校验当前供应商并写入档位别名、恢复 env 键、终止进程组、删除状态文件；六个失败分支分别退出。">
+        <defs>
+          <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5"
+                  markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" class="arrowhead" />
+          </marker>
+          <marker id="a2d" viewBox="0 0 10 10" refX="9" refY="5"
+                  markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" class="arrowhead-dead" />
+          </marker>
+        </defs>
+
+        <!-- ===== spine ===== -->
+
+        <!-- 1 -->
+        <rect class="node" x="40" y="24" width="318" height="52" rx="3" />
+        <text class="num" x="62" y="55">01</text>
+        <text class="node-label" x="96" y="55">读取路由配置</text>
+
+        <line class="edge-dead" x1="358" y1="50" x2="444" y2="50" marker-end="url(#a2d)" />
+        <rect class="node-dead" x="450" y="24" width="330" height="52" rx="3" />
+        <text class="dead-label" x="468" y="45">缺项 → UI 列出缺失的变量名</text>
+        <text class="node-sub" x="468" y="63">终止，进程未启动</text>
+
+        <!-- 2 -->
+        <rect class="node" x="40" y="124" width="318" height="52" rx="3" />
+        <text class="num" x="62" y="155">02</text>
+        <text class="node-label" x="96" y="155">读路由状态文件</text>
+
+        <line class="edge-dead" x1="358" y1="150" x2="444" y2="150" marker-end="url(#a2d)" />
+        <rect class="node-dead" x="450" y="124" width="330" height="52" rx="3" />
+        <text class="dead-label" x="468" y="145">状态存在且进程存活</text>
+        <text class="node-sub" x="468" y="163">→ 拒绝：已处于启用状态</text>
+
+        <!-- 3 -->
+        <rect class="node" x="40" y="224" width="318" height="52" rx="3" />
+        <text class="num" x="62" y="255">03</text>
+        <text class="node-label" x="96" y="255">拉起 cc-switch-proxy 子进程</text>
+
+        <!-- 4 -->
+        <rect class="node" x="40" y="324" width="318" height="52" rx="3" />
+        <text class="num" x="62" y="355">04</text>
+        <text class="node-label" x="96" y="355">轮询 /health 至就绪</text>
+
+        <line class="edge-dead" x1="358" y1="350" x2="444" y2="350" marker-end="url(#a2d)" />
+        <rect class="node-dead" x="450" y="324" width="330" height="52" rx="3" />
+        <text class="dead-label" x="468" y="345">超时 / 进程启动后即退出</text>
+        <text class="node-sub" x="468" y="363">→ 终止进程，终止</text>
+
+        <!-- 5 -->
+        <rect class="node" x="40" y="424" width="318" height="52" rx="3" />
+        <text class="num" x="62" y="449">05</text>
+        <text class="node-label" x="96" y="449">快照受管理 env 键</text>
+        <text class="node-sub" x="96" y="467">→ 写状态文件（0600，含 PID）</text>
+
+        <!-- user band 1 -->
+        <rect class="band" x="40" y="512" width="740" height="46" rx="3" />
+        <text class="band-label" x="62" y="541">① 用户在配置页维护供应商，点「应用到 Claude Code」</text>
+
+        <!-- 6 -->
+        <rect class="node" x="40" y="592" width="318" height="52" rx="3" />
+        <text class="num" x="62" y="623">06</text>
+        <text class="node-label" x="96" y="623">校验供应商 · 备份 · 写入别名</text>
+
+        <line class="edge-dead" x1="358" y1="618" x2="444" y2="618" marker-end="url(#a2d)" />
+        <rect class="node-dead" x="450" y="592" width="330" height="52" rx="3" />
+        <text class="dead-label" x="468" y="613">当前没有选中的供应商</text>
+        <text class="node-sub" x="468" y="631">→ 拒绝，settings.json 不动</text>
+
+        <!-- user band 2 -->
+        <rect class="band" x="40" y="680" width="740" height="46" rx="3" />
+        <text class="band-label" x="62" y="709">② 用户点「关闭路由」</text>
+
+        <!-- 7 -->
+        <rect class="node" x="40" y="760" width="318" height="52" rx="3" />
+        <text class="num" x="62" y="791">07</text>
+        <text class="node-label" x="96" y="791">恢复受管理 env 键</text>
+
+        <line class="edge-dead" x1="358" y1="786" x2="444" y2="786" marker-end="url(#a2d)" />
+        <rect class="node-dead" x="450" y="760" width="330" height="52" rx="3" />
+        <text class="dead-label" x="468" y="781">还原失败</text>
+        <text class="node-sub" x="468" y="799">→ 保留状态文件，可原样重试</text>
+
+        <!-- 8 -->
+        <rect class="node" x="40" y="860" width="318" height="52" rx="3" />
+        <text class="num" x="62" y="891">08</text>
+        <text class="node-label" x="96" y="891">终止进程组</text>
+
+        <line class="edge-dead" x1="358" y1="886" x2="444" y2="886" marker-end="url(#a2d)" />
+        <rect class="node-dead" x="450" y="860" width="330" height="52" rx="3" />
+        <text class="dead-label" x="468" y="881">SIGTERM / SIGKILL 后仍在</text>
+        <text class="node-sub" x="468" y="899">→ 保留状态文件，可原样重试</text>
+
+        <!-- 9 -->
+        <rect class="node-done" x="40" y="960" width="318" height="52" rx="3" />
+        <text class="num" x="62" y="991">09</text>
+        <text class="node-label" x="96" y="991">删除状态文件</text>
+
+        <!-- ===== spine arrows ===== -->
+        <line class="edge" x1="200" y1="76" x2="200" y2="118" marker-end="url(#a2)" />
+        <line class="edge" x1="200" y1="176" x2="200" y2="218" marker-end="url(#a2)" />
+        <line class="edge" x1="200" y1="276" x2="200" y2="318" marker-end="url(#a2)" />
+        <line class="edge" x1="200" y1="376" x2="200" y2="418" marker-end="url(#a2)" />
+        <line class="edge" x1="200" y1="476" x2="200" y2="506" marker-end="url(#a2)" />
+        <line class="edge" x1="200" y1="558" x2="200" y2="586" marker-end="url(#a2)" />
+        <line class="edge" x1="200" y1="644" x2="200" y2="674" marker-end="url(#a2)" />
+        <line class="edge" x1="200" y1="726" x2="200" y2="754" marker-end="url(#a2)" />
+        <line class="edge" x1="200" y1="812" x2="200" y2="854" marker-end="url(#a2)" />
+        <line class="edge" x1="200" y1="912" x2="200" y2="954" marker-end="url(#a2)" />
+
+        <!-- branch annotation: 02 -> 03 -->
+        <text class="note" x="214" y="200">无状态，或状态在但进程已死</text>
+        <text class="note" x="214" y="213">→ 复用快照重新拉起，不重做快照</text>
+
+        <!-- ordering notes -->
+        <text class="note" x="214" y="838">先还原，后杀进程</text>
+        <text class="note" x="214" y="851">还原失败时进程还在</text>
+      </svg>
+      <figcaption>
+        图 2 — 生命周期主干九步（蓝框为两次用户动作）。红色虚线是六个失败出口：
+        01/04 保证进程不会留下，02/06/07/08 保留状态文件供原样重试。
+      </figcaption>
+    </figure>
+
+    <p>
+      顺序是刻意的：<strong>先还原 settings，再杀进程</strong>。反过来做的话，
+      进程杀掉了但还原失败，Claude Code 就指向一个死端口，而能恢复它的快照还在——
+      那是不可自愈的中间态。现在这个顺序下，任何失败都还能再点一次「关闭路由」。
+    </p>
+  </section>
+
+  <section>
+    <p class="sec-label">作用面</p>
+    <h2>只动 9 个键，其余原样</h2>
+    <p>
+      快照记录的是「键在不在」+「原来是什么值」，所以还原是精确的：
+      原本没有的键不会被留下，原本有的值会被放回去。模型键写的是稳定档位别名
+      （<code>claude-sonnet-5</code> …），真实模型由代理按当前供应商映射。
+      非 <code>env</code> 字段（<code>theme</code>、<code>permissions</code>、<code>skills</code>…）
+      从头到尾没进过作用域。
+    </p>
+
+    <div class="keys">
+      <div class="keyblock touched">
+        <h3>路由写入 · 关闭时还原</h3>
+        <ul>
+          <li>ANTHROPIC_BASE_URL</li>
+          <li>ANTHROPIC_AUTH_TOKEN</li>
+          <li>ANTHROPIC_MODEL</li>
+          <li>ANTHROPIC_DEFAULT_HAIKU_MODEL</li>
+          <li>ANTHROPIC_DEFAULT_SONNET_MODEL</li>
+          <li>ANTHROPIC_DEFAULT_OPUS_MODEL</li>
+          <li>…_HAIKU / _SONNET / _OPUS_MODEL_NAME<br><span style="opacity:.7">（仅当原本存在时才写）</span></li>
+        </ul>
+      </div>
+      <div class="keyblock plain">
+        <h3>完全不动</h3>
+        <ul>
+          <li>env 中的其他任何键</li>
+          <li>theme</li>
+          <li>permissions</li>
+          <li>statusLine / hooks</li>
+          <li>skills / agents</li>
+          <li>其余所有非 env 字段</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <p class="sec-label">设计取舍</p>
+    <h2>几条不能违反的约束</h2>
+
+    <ul class="rules">
+      <li>
+        <span class="tag">进程</span>
+        <p>不是 systemd 服务。随开随关，关掉就是关掉；代价是不随主机重启恢复——
+          重启后再点一次「开启」会复用已有快照重新拉起。</p>
+      </li>
+      <li>
+        <span class="tag">供应商</span>
+        <p>上游地址、凭据、档位模型都存在 cc-switch 的 SQLite 库里，由配置页经
+          <code>cc-switch-proxy provider …</code> 增删改；开启路由前必须有一个「当前供应商」。</p>
+      </li>
+      <li>
+        <span class="tag">零硬编码</span>
+        <p>可执行文件从 <code>PATH</code>（或 <code>DD_SWITCH_ROUTE_PROXY_BIN</code>）解析，
+          库路径由 <code>DD_SWITCH_ROUTE_DB</code> 给出。源码里不允许出现个人目录，
+          有回归测试守着这条。</p>
+      </li>
+      <li>
+        <span class="tag ok">快照优先</span>
+        <p>开启时拍快照、应用映射时<strong>不重做</strong>快照。所以「改模型」永远不会把
+          路由自己的配置记成「原来的配置」。</p>
+      </li>
+      <li>
+        <span class="tag warn">并发锁</span>
+        <p>开启 / 应用 / 关闭 / 切换配置档共用一把锁串行。路由激活期间
+          <code>POST /api/switch</code> 直接 409，CLI 脚本也会拒绝执行——
+          它们都会破坏快照语义。</p>
+      </li>
+      <li>
+        <span class="tag warn">凭据</span>
+        <p>真实凭据存在 cc-switch 的 SQLite 库里（用户私有）；写进
+          <code>~/.claude/settings.json</code> 的只是占位符 <code>PROXY_MANAGED</code>。
+          所有 API 响应一律脱敏为 <code>***</code>，也不进日志、不进 <code>config/*.json</code>。</p>
+      </li>
+      <li>
+        <span class="tag">仅本机</span>
+        <p><code>127.0.0.1:9301</code> 只服务本机的 Claude Code。
+          SSH 管理的远程服务器没有路由入口，也不会被这套流程碰到。</p>
+      </li>
+    </ul>
+  </section>
+
+</div>

@@ -71,6 +71,57 @@ Web UI **全程密码保护** —— 每个页面、每个 API 接口都必须�
 |---|---|
 | ![主面板](assets/dashboard-zh.png) | ![切换确认](assets/confirm-en.png) |
 
+## 本地路由（cc-switch-proxy，可选）
+
+一种可选模式：让 Claude Code 不再直连供应商，而是指向本机的 `cc-switch-proxy`
+网关。`cc-switch-proxy` 是由打过补丁的 cc-switch 构建出的无界面守护进程
+（见 [`patches/`](patches/README.md)）；dd-switch 只负责启停它并把 Claude Code
+指过去。供应商来自 cc-switch 的 SQLite 库。
+
+**工作方式**
+
+1. **配置供应商** —— 本地路由面板列出 `~/.cc-switch/cc-switch.db` 里的供应商。
+   可在面板中增删改，或一键把现有 `config/*.json` 导入。选一个作为当前供应商。
+2. **开启路由** —— dd-switch 拉起 `cc-switch-proxy --db … --port 9301`
+   （仅回环；普通子进程，不是服务），等待 `/health` 就绪，并快照
+   `~/.claude/settings.json` 里受管的 `env` 键。
+3. **应用** —— 写入 `ANTHROPIC_BASE_URL=http://127.0.0.1:9301`、占位凭据
+   `PROXY_MANAGED`，以及稳定的档位别名（`claude-sonnet-5` …）。代理再按当前
+   供应商的 `env` 把这些别名映射成真实模型（映射随供应商走）。`env` 里的其他键
+   和所有非 `env` 字段一概不动。
+4. **关闭路由** —— 从快照恢复受管的键，然后结束进程组。恢复失败会保留状态以便重试。
+
+**配置** —— 全部设置都在 dd-switch 的 `EnvironmentFile`
+（`~/.config/systemd/user/dd-switch.env`，权限 0600），不写死任何东西：
+
+| 变量 | 必填 | 含义 |
+|---|---|---|
+| `DD_SWITCH_ROUTE_ENABLED` | 是 | `1` 开启该功能 |
+| `DD_SWITCH_ROUTE_PROXY_BIN` | 否 | `cc-switch-proxy` 可执行文件；默认从 `PATH` 找 |
+| `DD_SWITCH_ROUTE_DB` | 否 | cc-switch 的 SQLite 路径；默认 `~/.cc-switch/cc-switch.db` |
+| `DD_SWITCH_ROUTE_APP` | 否 | 应用类型；默认 `claude` |
+| `DD_SWITCH_ROUTE_PORT` | 否 | 监听端口；默认 `9301` |
+
+```bash
+chmod 600 ~/.config/systemd/user/dd-switch.env
+# 追加上述变量，然后：
+systemctl --user restart dd-switch
+```
+
+**说明与限制**
+
+- 先构建 `cc-switch-proxy` —— 见 [`patches/README.md`](patches/README.md)。
+- 可执行文件从 `PATH`（或 `DD_SWITCH_ROUTE_PROXY_BIN`）解析——用你平时启动它的
+  那个环境即可。
+- 供应商凭据落在 cc-switch 的库里（用户私有），并在所有 API 响应中打码——不要写进
+  `config/*.json`。
+- `127.0.0.1:9301` 只服务**本机**的 Claude Code。通过 SSH 管理的远程服务器没有
+  路由控制。
+- 该进程不会在重启后存活。重启后点“开启路由”会重新拉起并复用已有快照。
+- 路由开启期间禁止切换配置档（会破坏恢复快照）——请先关闭路由。
+  `switch_claude_config.sh` 出于同样原因也会拒绝运行。
+- 测试：在 `dd-switch/` 下执行 `python3 -m unittest discover -s tests`。
+
 ## 配置目录结构
 
 将各份 Claude Code 配置 JSON 文件放入 `config/` 目录：
@@ -115,21 +166,36 @@ config/
 
 ## 依赖
 
+**CLI 脚本**（`switch_claude_config.sh`）— 不需要 Python：
+
 - `bash` 4.0+（`mapfile` 支持）
 - `jq`（必需，JSON 校验与合并）
-
-安装 `jq`：
 
 ```bash
 # Ubuntu/Debian
 sudo apt install jq
-
 # macOS
 brew install jq
-
 # Arch Linux
 sudo pacman -S jq
 ```
+
+**Web UI**（`dd-switch/`）— 需要 Python 3.10+，依赖列在 `requirements.txt`：
+
+```bash
+pip install -r requirements.txt   # flask、waitress、paramiko、cryptography
+```
+
+| 包 | 用途 |
+|---|---|
+| `flask` | HTTP 应用 |
+| `waitress` | 生产环境 WSGI 服务器 |
+| `paramiko` | SSH 连接远程服务器 |
+| `cryptography` | 加密 SSH 密钥密码短语（PBKDF2 + Fernet） |
+
+**可选 — 本地路由（cc-switch-proxy）**：不是 pip 依赖。本地路由由打过补丁的
+cc-switch 构建出的 `cc-switch-proxy` 守护进程提供（见
+[`patches/README.md`](patches/README.md)）。不装它，其余功能完全不受影响。
 
 ## 工作流程示例
 

@@ -1,0 +1,18 @@
+# claude-gearshift — dd-switch Web UI 依赖
+#
+# 只有 Web UI (dd-switch/) 需要这些；CLI 脚本 switch_claude_config.sh
+# 只依赖 bash + jq，不在此列。
+#
+# 下限版本取自当前已验证可跑的环境，不做锁死——兼容更新自行升级即可。
+#   pip install -r requirements.txt
+
+flask>=3.0.0
+waitress>=3.0.2
+paramiko>=5.0.0
+cryptography>=50.0.2
+
+# ---------------------------------------------------------------------------
+# 可选：本地路由（cc-switch-proxy）。它不是一个 pip 依赖——本地路由由 cc-switch
+# 的无界面守护进程 cc-switch-proxy 提供（源码补丁见 ../patches/）。按需拉起，
+# 开关默认关闭，不装也完全不影响配置切换的全部功能。构建与用法见 patches/README.md。
+#

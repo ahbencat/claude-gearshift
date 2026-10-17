@@ -71,6 +71,64 @@ The Web UI is **password-protected end to end** — every page and every API end
 |---|---|
 | ![Dashboard](assets/dashboard-en.png) | ![Confirm switch](assets/confirm-en.png) |
 
+## Local Routing (cc-switch-proxy, optional)
+
+An opt-in mode where Claude Code talks to a local `cc-switch-proxy` gateway
+instead of a provider directly. `cc-switch-proxy` is the headless daemon built
+from a patched cc-switch (see [`patches/`](patches/README.md)); dd-switch only
+starts/stops it and points Claude Code at it. Providers come from cc-switch's
+SQLite database.
+
+**How it works**
+
+1. **Add providers** — the local-routing panel lists providers from
+   `~/.cc-switch/cc-switch.db`. Add/edit them there, or import the existing
+   `config/*.json` in one click. Pick one as current.
+2. **Start routing** — dd-switch spawns `cc-switch-proxy --db … --port 9301`
+   (loopback-only; a plain child process, not a service), waits for `/health`,
+   and snapshots the managed `env` keys from `~/.claude/settings.json`.
+3. **Apply** — writes `ANTHROPIC_BASE_URL=http://127.0.0.1:9301`, the
+   `PROXY_MANAGED` placeholder token, and the stable tier aliases
+   (`claude-sonnet-5` …). The proxy maps those aliases to the current provider's
+   real models (per-provider, from the provider's `env`). Everything else in
+   `env` and every non-`env` field is left alone.
+4. **Stop routing** — the managed keys are restored from the snapshot, then the
+   process group is terminated. A failed restore keeps the state so the
+   operation can be retried.
+
+**Setup** — all settings live in dd-switch's `EnvironmentFile`
+(`~/.config/systemd/user/dd-switch.env`, mode 0600); nothing is hardcoded:
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `DD_SWITCH_ROUTE_ENABLED` | yes | `1` turns the feature on |
+| `DD_SWITCH_ROUTE_PROXY_BIN` | no | `cc-switch-proxy` executable; defaults to `PATH` |
+| `DD_SWITCH_ROUTE_DB` | no | cc-switch SQLite path; defaults to `~/.cc-switch/cc-switch.db` |
+| `DD_SWITCH_ROUTE_APP` | no | app type; defaults to `claude` |
+| `DD_SWITCH_ROUTE_PORT` | no | listen port; defaults to `9301` |
+
+```bash
+chmod 600 ~/.config/systemd/user/dd-switch.env
+# append the variables above, then:
+systemctl --user restart dd-switch
+```
+
+**Notes and limits**
+
+- Build `cc-switch-proxy` first — see [`patches/README.md`](patches/README.md).
+- The binary is resolved from `PATH` (or `DD_SWITCH_ROUTE_PROXY_BIN`) — use
+  whatever environment you would normally launch it in.
+- Provider tokens land in cc-switch's DB (user-private) and are masked in every
+  API response — never put them in `config/*.json`.
+- `127.0.0.1:9301` only serves Claude Code on **this** machine. Remote servers
+  managed over SSH have no routing control.
+- The process does not survive a reboot. After a reboot, "Start routing"
+  re-spawns it and reuses the existing snapshot.
+- While routing is active, profile switching is locked (it would corrupt the
+  restore snapshot) — stop routing first. `switch_claude_config.sh` refuses to
+  run for the same reason.
+- Run the tests with `python3 -m unittest discover -s tests` from `dd-switch/`.
+
 ## Config Directory Structure
 
 Drop one JSON file per provider into `config/`:
@@ -115,21 +173,37 @@ More optional fields: [Claude Code environment variables](https://docs.anthropic
 
 ## Dependencies
 
+**CLI script** (`switch_claude_config.sh`) — no Python needed:
+
 - `bash` 4.0+ (`mapfile` support)
 - `jq` (required — JSON validation & merge)
-
-Install `jq`:
 
 ```bash
 # Ubuntu/Debian
 sudo apt install jq
-
 # macOS
 brew install jq
-
 # Arch Linux
 sudo pacman -S jq
 ```
+
+**Web UI** (`dd-switch/`) — Python 3.10+, listed in `requirements.txt`:
+
+```bash
+pip install -r requirements.txt   # flask, waitress, paramiko, cryptography
+```
+
+| Package | Why |
+|---|---|
+| `flask` | HTTP app |
+| `waitress` | production WSGI server |
+| `paramiko` | SSH to remote servers |
+| `cryptography` | encrypts SSH key passphrases (PBKDF2 + Fernet) |
+
+**Optional — local routing (cc-switch-proxy):** not a pip dependency. Local
+routing is provided by the `cc-switch-proxy` daemon built from a patched
+cc-switch (see [`patches/README.md`](patches/README.md)). Everything else works
+without it.
 
 ## Workflow Example
 
