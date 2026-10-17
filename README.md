@@ -37,6 +37,7 @@ Requires `flask` + `waitress` + `paramiko` + `cryptography` — `pip install fla
 - Browse / create / edit / delete / switch configs under `config/` right from the page
 - 中/EN language toggle in the top-right corner (your choice is remembered)
 - Same switch semantics as the CLI script — both can be used interchangeably
+- Optional **local routing** with its own config page: manage providers (stored in cc-switch's DB), start/stop the `cc-switch-proxy` gateway, and apply it to Claude Code — see [Local Routing](#local-routing-cc-switch-proxy-optional)
 
 ### Multi-Server SSH Support
 
