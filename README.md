@@ -11,6 +11,28 @@ Two ways to use it, sharing the same `config/` directory and the same switch sem
 | CLI script | `switch_claude_config.sh` | Interactive menu, `bash` + `jq` |
 | Web UI | `dd-switch/` | Flask + waitress, browser-based, password-protected |
 
+## Why this panel
+
+Running Claude Code across **several Linux servers** is the case this panel is
+built for. Each box keeps its own provider / model / API key in
+`~/.claude/settings.json`, and switching a provider normally means SSHing into
+every machine and editing JSON by hand — easy to miss one, easy to typo.
+
+One password-protected Web UI fixes that:
+
+- **Every machine in one place** — add your servers once (SSH key auth), then
+  read, switch and scan each server's `~/.claude/settings.json` from a single page.
+- **Predefined profiles, one-click switch** — keep each provider as a file under
+  `config/`; switching replaces only `env` and writes atomically, so `theme` /
+  `permissions` / `skills` stay untouched.
+- **Optional local routing** — point a server's Claude Code at the
+  `cc-switch-proxy` gateway and change upstream providers centrally, without
+  re-editing that machine's config each time.
+- **Safe by default** — password-protected end to end, credentials masked in the
+  UI, automatic backup before every switch.
+
+No more per-server manual editing, no more drift between machines.
+
 ## CLI Script Usage
 
 ```bash

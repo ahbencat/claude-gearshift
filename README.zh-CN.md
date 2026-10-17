@@ -11,6 +11,24 @@
 | 终端脚本 | `switch_claude_config.sh` | 交互式菜单，`bash` + `jq` |
 | Web UI | `dd-switch/` | Flask + waitress，浏览器操作，密码保护 |
 
+## 这个面板解决什么问题
+
+**多台 Linux 服务器**上跑 Claude Code，正是这个面板的用武之地。每台机器都要在
+`~/.claude/settings.json` 里单独配供应商 / 模型 / API key；想换个供应商，传统做法是
+挨台 SSH 上去手改 JSON——漏掉一台、手抖写错都很常见。
+
+一个带密码的 Web 面板把这些收拢到一处：
+
+- **一处管所有机器** —— 服务器加一次（SSH 密钥认证），在一页里读取、切换、扫描每台
+  的 `~/.claude/settings.json`。
+- **预设配置档，一键切换** —— 每套供应商存成 `config/` 下的一个文件；切换只替换
+  `env` 并原子写入，`theme` / `permissions` / `skills` 原样不动。
+- **可选的本地路由** —— 让某台服务器的 Claude Code 指向 `cc-switch-proxy` 网关，
+  集中更换上游供应商，不必每次回去改那台机器的配置。
+- **默认安全** —— 全程密码保护、UI 里凭据打码、每次切换前自动备份。
+
+不必再逐台手改，也不会出现机器之间的配置漂移。
+
 ## 终端脚本用法
 
 ```bash
