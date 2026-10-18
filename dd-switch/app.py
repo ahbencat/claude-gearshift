@@ -366,16 +366,15 @@ def _wait_route_ready(pid):
     raise RouteError(f"cc-switch-proxy 启动超时: {last or '/health 不可达'}")
 
 
-def _proxy_cli(subargs, timeout=20):
-    """Run `cc-switch-proxy provider …` and return the parsed JSON output."""
-    cmd = [_proxy_path(), "provider"] + subargs + ["--db", ROUTE_DB, "--app", ROUTE_APP]
+def _run_proxy_cmd(cmd, err_label, timeout=20):
+    """Run a cc-switch-proxy subcommand and return the parsed JSON output."""
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except Exception as e:
         raise RouteError(f"调用 cc-switch-proxy 失败: {e}")
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "").strip()
-        raise RouteError(f"供应商操作失败: {detail or f'exit {proc.returncode}'}")
+        raise RouteError(f"{err_label}: {detail or f'exit {proc.returncode}'}")
     lines = [ln for ln in proc.stdout.strip().splitlines() if ln.strip()]
     if not lines:
         raise RouteError("cc-switch-proxy 未返回结果")
@@ -383,6 +382,14 @@ def _proxy_cli(subargs, timeout=20):
         return json.loads(lines[-1])
     except Exception:
         raise RouteError("cc-switch-proxy 返回了无法解析的输出")
+
+
+def _proxy_cli(subargs, timeout=20):
+    """Run `cc-switch-proxy provider …` and return the parsed JSON output."""
+    return _run_proxy_cmd(
+        [_proxy_path(), "provider"] + subargs + ["--db", ROUTE_DB, "--app", ROUTE_APP],
+        "供应商操作失败", timeout,
+    )
 
 
 def route_providers():
@@ -419,52 +426,37 @@ def route_provider_set_current(provider_id):
     return _proxy_cli(["set-current", "--id", provider_id])
 
 
-_PROXY_SCHEME_RE = re.compile(r"^(https?|socks5h?)://\S+$", re.IGNORECASE)
-
-
 def _proxy_global_cli(subargs, timeout=20):
     """Run `cc-switch-proxy proxy …`（全局出站代理，与 provider 子命令一样纯 DAO）。"""
-    cmd = [_proxy_path(), "proxy"] + subargs + ["--db", ROUTE_DB]
-    try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-    except Exception as e:
-        raise RouteError(f"调用 cc-switch-proxy 失败: {e}")
-    if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "").strip()
-        raise RouteError(f"出站代理操作失败: {detail or f'exit {proc.returncode}'}")
-    lines = [ln for ln in proc.stdout.strip().splitlines() if ln.strip()]
-    if not lines:
-        raise RouteError("cc-switch-proxy 未返回结果")
-    try:
-        return json.loads(lines[-1])
-    except Exception:
-        raise RouteError("cc-switch-proxy 返回了无法解析的输出")
+    return _run_proxy_cmd(
+        [_proxy_path(), "proxy"] + subargs + ["--db", ROUTE_DB],
+        "出站代理操作失败", timeout,
+    )
+
+
+def _proxy_view(data):
+    """CLI 的 snake_case 输出 → 前端的 camelCase 视图。"""
+    return {
+        "globalProxyUrl": data.get("global_proxy_url"),
+        "effective": data.get("effective", ""),
+    }
 
 
 def route_proxy_setting():
     """当前全局出站代理（None=直连）。"""
-    data = _proxy_global_cli(["get"])
-    return {
-        "globalProxyUrl": data.get("global_proxy_url"),
-        "effective": data.get("effective", ""),
-    }
+    return _proxy_view(_proxy_global_cli(["get"]))
 
 
 def route_proxy_save(url):
-    """未提供 URL 时清直连；其余交给 CLI 校验（DB 深校验失败会给出 exit!=0）。"""
+    """未提供 URL 时清直连；其余交给 CLI 校验（深校验失败会给出 exit!=0）。"""
     url = (url or "").strip()
     if not url:
         return route_proxy_clear()
-    data = _proxy_global_cli(["set", "--url", url])
-    return {
-        "globalProxyUrl": data.get("global_proxy_url"),
-        "effective": data.get("effective", ""),
-    }
+    return _proxy_view(_proxy_global_cli(["set", "--url", url]))
 
 
 def route_proxy_clear():
-    data = _proxy_global_cli(["clear"])
-    return {"globalProxyUrl": None, "effective": data.get("effective", "")}
+    return _proxy_view(_proxy_global_cli(["clear"]))
 
 
 def route_provider_import(directory, set_current=False):

@@ -299,7 +299,7 @@
     [/^切换失败: (.*)$/, "errSwitchFailed"],
     [/^本地路由启用中，请先关闭路由再切换配置$/, "errRouteActive"],
     [/^本地路由功能未启用或缺少配置$/, "errRouteUnsupported"],
-    [/^无效的代理 URL/, "errRouteProxyScheme"],
+    [/无效的代理 URL/, "errRouteProxyScheme"],
     [/^本地路由已处于启用状态$/, "errRouteAlready"],
     [/^本地路由未启用$/, "errRouteNotActive"],
     [/^cc-switch-proxy 进程未运行，请重新开启路由$/, "errRouteProcessDown"],

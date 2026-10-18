@@ -267,9 +267,8 @@ class ProxySettingTests(RouteTestCase):
         self.assertIsNone(res["globalProxyUrl"])
         self.assertEqual(self.proxy_global_mock.call_args[0][0], ["clear"])
 
-    def test_frontend_validator_rejects_wrong_scheme_before_cli(self):
-        # 与前端同规则：非 http(s)/socks5(h) 交给 CLI 深校验失败，包装层不再放行空 url 以外的东西进 CLI？—
-        # 设计上放行（保留 CLI 报错），这里只断言确实原样传给了 CLI。
+    def test_unsupported_scheme_passes_through_to_cli(self):
+        # 后端不做 scheme 预检（前端 toast 拦截 + Rust 深校验是唯一真相来源），原样透传。
         app.route_proxy_save("ftp://x")
         self.assertEqual(self.proxy_global_mock.call_args[0][0], ["set", "--url", "ftp://x"])
 
@@ -285,8 +284,6 @@ class ProxySettingTests(RouteTestCase):
         self.assertIn("--db", cmd)
         self.assertNotIn("--app", cmd)
         self.assertIsNone(out["globalProxyUrl"])
-        self.assertEqual(app._PROXY_SCHEME_RE.match("socks5h://a").group(1), "socks5h")
-        self.assertIsNone(app._PROXY_SCHEME_RE.match("ftp://x"))
 
 
 if __name__ == "__main__":
