@@ -97,10 +97,16 @@ Web UI **全程密码保护** —— 每个页面、每个 API 接口都必须�
 （见 [`patches/`](patches/README.md)）；dd-switch 只负责启停它并把 Claude Code
 指过去。供应商来自 cc-switch 的 SQLite 库。
 
+> **⚠️ 现状（2026-10-26）：仅出站代理场景已验证可用。**
+> 转接口**尚未调通**：Web 界面或 `cc-switch-proxy provider add` 建的供应商落库时
+> 没有协议元数据（`meta.apiFormat` 为空），代理永远按 Anthropic 格式透传。
+> `config/*.json` 里写顶层 `"api_format"`（`"openai_chat"` / `"openai_responses"` /
+> `"gemini_native"`）可在 `provider import` 时被识别，但新增/编辑表单暂无协议输入。
+
 **什么时候才需要它** —— 本地路由只在两种场景下有价值：
 
-1. **转接口** —— 上游说 OpenAI / Gemini 等非 Anthropic 协议，由代理做协议转换
-   让 Claude Code 照常使用；或把多个上游统一成一个本机入口。
+1. **转接口** —— ⚠️ 尚未调通，见上。上游说 OpenAI / Gemini 等非 Anthropic 协议，
+   由代理做协议转换让 Claude Code 照常使用；或把多个上游统一成一个本机入口。
 2. **加代理** —— 出站请求必须经 HTTP/HTTPS/SOCKS5 网络代理才能到达上游。需要
    在**启动守护进程前**配置好：Web 界面的本地路由页有「出站代理」一栏（写入
    与桌面端「全局代理」同一份设置；无界面的机器也可以用 `cc-switch-proxy
