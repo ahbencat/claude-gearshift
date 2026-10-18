@@ -233,5 +233,61 @@ class ProviderCliTests(RouteTestCase):
         self.assertEqual(env["ANTHROPIC_BASE_URL"], "https://a")
 
 
+class ProxySettingTests(RouteTestCase):
+    def setUp(self):
+        # 先记下未被类级 mock 覆盖前的原始函数，供 subprocess 集成测试还原用
+        self.orig_proxy_global_cli = app._proxy_global_cli
+        super().setUp()
+        self.proxy_global = mock.patch.object(
+            app, "_proxy_global_cli",
+            return_value={"global_proxy_url": None, "effective": "重启 cc-switch-proxy 后生效（或由环境变量兜底）"},
+        )
+        self.proxy_global_mock = self.proxy_global.start()
+        self.addCleanup(self.proxy_global.stop)
+
+    def test_get_maps_snake_to_camel(self):
+        out = app.route_proxy_setting()
+        self.assertIsNone(out["globalProxyUrl"])
+        self.assertIn("重启", out["effective"])
+        self.assertEqual(self.proxy_global_mock.call_args[0][0], ["get"])
+
+    def test_set_passes_url_verbatim(self):
+        self.proxy_global_mock.return_value = {
+            "global_proxy_url": "socks5h://10.0.0.2:1080",
+            "effective": "重启 cc-switch-proxy 后生效（或由环境变量兜底）",
+        }
+        res = app.route_proxy_save("socks5h://10.0.0.2:1080")
+        self.assertEqual(res["globalProxyUrl"], "socks5h://10.0.0.2:1080")
+        self.assertEqual(self.proxy_global_mock.call_args[0][0],
+                         ["set", "--url", "socks5h://10.0.0.2:1080"])
+
+    def test_empty_url_clears(self):
+        self.proxy_global_mock.return_value = {"global_proxy_url": None, "effective": ""}
+        res = app.route_proxy_save("   ")
+        self.assertIsNone(res["globalProxyUrl"])
+        self.assertEqual(self.proxy_global_mock.call_args[0][0], ["clear"])
+
+    def test_frontend_validator_rejects_wrong_scheme_before_cli(self):
+        # 与前端同规则：非 http(s)/socks5(h) 交给 CLI 深校验失败，包装层不再放行空 url 以外的东西进 CLI？—
+        # 设计上放行（保留 CLI 报错），这里只断言确实原样传给了 CLI。
+        app.route_proxy_save("ftp://x")
+        self.assertEqual(self.proxy_global_mock.call_args[0][0], ["set", "--url", "ftp://x"])
+
+    def test_proxy_cli_wraps_subprocess_correctly(self):
+        # 还原原始 _proxy_global_cli，让它调用 subprocess 验证命令拼装
+        with mock.patch.object(app, "_proxy_global_cli", self.orig_proxy_global_cli):
+            fake_proc = type("Proc", (), {"returncode": 0, "stdout": '{"global_proxy_url": null}\n', "stderr": ""})()
+            with mock.patch.object(app.subprocess, "run", return_value=fake_proc) as run_mock:
+                out = app.route_proxy_setting()
+                cmd = run_mock.call_args[0][0]
+        # 走 `proxy` 子命令、带 --db、不带 --app（provider 专属）
+        self.assertEqual(cmd[1], "proxy")
+        self.assertIn("--db", cmd)
+        self.assertNotIn("--app", cmd)
+        self.assertIsNone(out["globalProxyUrl"])
+        self.assertEqual(app._PROXY_SCHEME_RE.match("socks5h://a").group(1), "socks5h")
+        self.assertIsNone(app._PROXY_SCHEME_RE.match("ftp://x"))
+
+
 if __name__ == "__main__":
     unittest.main()

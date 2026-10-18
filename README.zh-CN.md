@@ -102,10 +102,10 @@ Web UI **全程密码保护** —— 每个页面、每个 API 接口都必须�
 1. **转接口** —— 上游说 OpenAI / Gemini 等非 Anthropic 协议，由代理做协议转换
    让 Claude Code 照常使用；或把多个上游统一成一个本机入口。
 2. **加代理** —— 出站请求必须经 HTTP/HTTPS/SOCKS5 网络代理才能到达上游。需要
-   在**启动守护进程前**配置好：要么用 `cc-switch-proxy proxy set --url
-   http://代理机:7890` 写入全局代理（与桌面端「全局代理」是同一份设置），要么
-   直接用 `HTTP_PROXY` / `HTTPS_PROXY` 环境变量（守护进程会跟随）——配置后需
-   重启 cc-switch-proxy 才生效。
+   在**启动守护进程前**配置好：Web 界面的本地路由页有「出站代理」一栏（写入
+   与桌面端「全局代理」同一份设置；无界面的机器也可以用 `cc-switch-proxy
+   proxy set --url …`），或直接用 `HTTP_PROXY` / `HTTPS_PROXY` 环境变量
+   （守护进程会跟随）——配置后需重启 cc-switch-proxy 才生效。
 
 只是直连 Anthropic 协议供应商、网络也通畅的话，用原来的切换流程直连即可，
 不必开本地路由。

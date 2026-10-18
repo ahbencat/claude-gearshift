@@ -109,11 +109,11 @@ situations:
    proxy converts protocols so Claude Code keeps working as-is, or several
    upstreams funnel behind one local endpoint.
 2. **Outbound proxy (加代理)** — reaching the upstream requires an
-   HTTP/HTTPS/SOCKS5 network proxy. Set it before starting the daemon (either
-   `cc-switch-proxy proxy set --url http://proxy-host:7890`, which writes the
-   same global-proxy setting the desktop app uses, or via `HTTP_PROXY` /
-   `HTTPS_PROXY` env vars which the daemon follows) — then restart the daemon
-   for it to take effect.
+   HTTP/HTTPS/SOCKS5 network proxy. Set it before starting the daemon: the
+   local-routing page in the Web UI has an "Outbound proxy" box (it writes the
+   same global-proxy setting the desktop app uses, via
+   `cc-switch-proxy proxy set --url …` on headless hosts); `HTTP_PROXY` /
+   `HTTPS_PROXY` env vars work too. A daemon restart makes it effective.
 
 If you simply connect directly to an Anthropic-protocol provider and the
 network is fine, the ordinary switch flow is enough — no need for local

@@ -251,6 +251,17 @@
           <button class="btn btn-sm" onclick="openProviderForm()" data-i18n="routeAddProvider">＋ 添加供应商</button>
         </div>
         <div id="routeProviderList" style="font-size:13px"></div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;margin:12px 0 6px">
+          <strong style="font-size:13px" data-i18n="routeProxyTitle">出站代理</strong>
+          <span style="font-size:12px;color:var(--muted)" data-i18n="routeProxyOptional">可选——出站需经网络代理时才填</span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input type="text" id="routeProxyUrl" data-i18n-placeholder="routeProxyPlaceholder" placeholder="http://代理机:7890（留空 = 直连）" style="flex:1;min-width:220px;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px" />
+          <button class="btn btn-sm btn-primary" id="btnRouteProxySave" onclick="routeProxySave()" data-i18n="routeProxySave">保存</button>
+          <button class="btn btn-sm" id="btnRouteProxyClear" onclick="routeProxyClear()" data-i18n="routeProxyClear">清除</button>
+        </div>
+        <div id="routeProxyHint" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
       </div>
 
       <details class="route-manual" id="routeManual" open>
@@ -259,7 +270,7 @@
         <p><strong data-i18n="routeManualWhyTitle">什么时候需要（仅这两种场景）</strong></p>
         <ul>
           <li data-i18n="routeManualWhyRelay">① 转接口：上游不是 Anthropic 协议（如 OpenAI / Gemini 格式），由代理做协议转换，Claude Code 照常使用；或把多个上游统一成一个本机入口。</li>
-          <li data-i18n="routeManualWhyProxy">② 加代理：出站请求需要经网络代理（HTTP / HTTPS / SOCKS5）才能到达上游——用 cc-switch-proxy proxy set --url http://代理机:7890 写入 cc-switch 库的全局代理（也遵循 HTTP_PROXY 等环境变量），写入后需重启路由生效。</li>
+          <li data-i18n="routeManualWhyProxy">② 加代理：出站请求需要经网络代理（HTTP / HTTPS / SOCKS5）才能到达上游——在本页「出站代理」一栏填入地址并保存（与桌面端全局代理同一份设置，也遵循 HTTP_PROXY 等环境变量），写入后需重启路由生效。</li>
         </ul>
         <p data-i18n="routeManualWhyDirect">只是直连 Anthropic 协议供应商、网络通畅的话，用原来的切换流程直连即可，不必开本地路由。</p>
         <p><strong data-i18n="routeManualStepsTitle">使用步骤</strong></p>
@@ -438,6 +449,7 @@ async function loadAll() {
 // --- Local routing (cc-switch-proxy) ---
 let routeProviders = [];
 let routeCurrent = null;
+let routeProxy = null; // 出站代理设置（globalProxyUrl / effective）
 
 function esc(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, c => (
@@ -458,6 +470,51 @@ async function loadRoute() {
     document.getElementById("routeCard").style.display = "none";
     syncRouteTab(false);
   }
+  // 出站代理单独加载：CLI 版本太老不支持 `proxy` 子命令时只禁用这一块，不拖累整个面板
+  api("GET", "api/route/proxy")
+    .then((p) => { routeProxy = p; renderProxy(); })
+    .catch(() => { routeProxy = null; renderProxy(); });
+}
+
+function renderProxy() {
+  const inp = document.getElementById("routeProxyUrl");
+  const hint = document.getElementById("routeProxyHint");
+  const btnSave = document.getElementById("btnRouteProxySave");
+  const btnClear = document.getElementById("btnRouteProxyClear");
+  if (!routeProxy) {
+    inp.disabled = true; btnSave.disabled = true; btnClear.disabled = true;
+    hint.textContent = t("routeProxyUnavailable");
+    return;
+  }
+  inp.disabled = false; btnSave.disabled = false; btnClear.disabled = false;
+  if (inp.value !== "") return; // 用户正在输入时不覆盖
+  inp.value = routeProxy.globalProxyUrl || "";
+  hint.textContent = routeProxy.globalProxyUrl
+    ? `${t("routeProxyApplied")}${routeProxy.globalProxyUrl}`
+    : t("routeProxyNotSet");
+}
+
+async function routeProxySave() {
+  const inp = document.getElementById("routeProxyUrl");
+  const url = inp.value.trim();
+  if (url && !/^(https?|socks5h?):\/\//i.test(url)) {
+    toast(`❌ ${t("routeProxyErrScheme")}`, "error");
+    return;
+  }
+  try {
+    const res = await api("POST", "api/route/proxy", { url });
+    routeProxy = res;
+    inp.value = res.globalProxyUrl || "";
+    toast(res.globalProxyUrl ? t("routeProxyToast") : t("routeProxyToastCleared"), "success");
+    renderProxy();
+  } catch (e) {
+    toast(`❌ ${translateError(e.message)}`, "error");
+  }
+}
+
+function routeProxyClear() {
+  document.getElementById("routeProxyUrl").value = "";
+  routeProxySave();
 }
 
 function renderRoute(data) {
