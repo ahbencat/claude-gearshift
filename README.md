@@ -136,24 +136,23 @@ chmod 600 ~/.config/systemd/user/dd-switch.env
 systemctl --user restart dd-switch
 ```
 
+### cc-switch-proxy dependencies (compile vs run)
+
+| Scope | What it needs | How to provide it |
+|---|---|---|
+| **Run** | `libwebkit2gtk-4.1.so.0` and `libjavascriptcoregtk-4.1.so.0` plus their deps (`libgstgl-1.0`, `libwebpdemux`, `libharfbuzz-icu`, `libmanette-0.2`, `libenchant-2`, `libhyphen`, `libsecret-1`, mesa/egl/gbm, dictionaries). GTK 3 / libsoup 3 are usually already present. | Root: `sudo apt-get install libwebkit2gtk-4.1-0` (pulls the rest). Without root: unpack the runtime `.deb`s into a directory and set `LD_LIBRARY_PATH` — recipe in [`patches/README.md`](patches/README.md#prebuilt-binary). |
+| **Compile** | Full Tauri Linux prerequisites — WebKitGTK/GTK **dev** packages — because the proxy links the whole `cc_switch_lib` crate (`cc-switch/src-tauri`), not because of OAuth. | See [`cc-switch/CONTRIBUTING.md`](../cc-switch/CONTRIBUTING.md); a root-free build is possible by extracting dev `.deb`s into a sysroot and pointing `pkg-config`/`LIBRARY_PATH` at it. |
+
+> **OAuth limit**: login-based providers (GitHub Copilot, ChatGPT/Codex, xAI) only
+> work through the cc-switch **desktop** app — the headless daemon has no
+> `AppHandle`, so only API-key providers (Anthropic, OpenAI-compatible, Gemini,
+> OpenRouter, …) work.
+
 **Notes and limits**
 
 - Get `cc-switch-proxy` first: use the prebuilt binary in `patches/bin/`
-  (Linux x86_64; needs the WebKitGTK runtime) or build it — see
-  [`patches/README.md`](patches/README.md).
-- **Runtime libraries** — the binary links cc-switch's Tauri/WebKitGTK stack, so a
-  minimal host needs the WebKitGTK 4.1 runtime. Simplest:
-  `sudo apt-get install libwebkit2gtk-4.1-0` (pulls GTK 3, libsoup 3, and the rest).
-  Without root, extract the runtime `.deb`s into a directory and point the daemon at
-  them with `LD_LIBRARY_PATH`; the recipe is in
-  [`patches/README.md`](patches/README.md#prebuilt-binary).
-- **Compile-time** — building it needs the full Tauri Linux prerequisites
-  (WebKitGTK/GTK **dev** packages), because the proxy links the whole
-  `cc_switch_lib` crate. That is a Tauri requirement, **not** OAuth.
-- **OAuth** — login-based providers (GitHub Copilot, ChatGPT/Codex, xAI) only work
-  through the cc-switch **desktop** app; the headless daemon has no `AppHandle`, so
-  it supports API-key providers (Anthropic, OpenAI-compatible, Gemini, OpenRouter,
-  …) only.
+  (Linux x86_64) or build it — see [`patches/README.md`](patches/README.md);
+  compile/run dependencies are in the table above.
 - The binary is resolved from `PATH` (or `DD_SWITCH_ROUTE_PROXY_BIN`) — use
   whatever environment you would normally launch it in.
 - Provider tokens land in cc-switch's DB (user-private) and are masked in every

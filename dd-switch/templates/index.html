@@ -56,8 +56,17 @@
   .config-item .actions .btn-del:hover { color: var(--danger); }
   .main {
     flex: 1; display: flex; flex-direction: column; padding: 24px; gap: 16px;
-    overflow-y: auto;
+    overflow-y: auto; min-width: 0;
   }
+  .tabbar { display: flex; gap: 8px; }
+  .tabbtn {
+    padding: 6px 14px; border-radius: var(--radius); border: 1px solid var(--border);
+    background: transparent; color: var(--muted); font-size: 13px; cursor: pointer;
+    transition: all .15s;
+  }
+  .tabbtn:hover:not(:disabled) { background: rgba(255,255,255,.06); color: var(--text); }
+  .tabbtn.active { background: rgba(99,102,241,.12); border-color: var(--accent); color: var(--text); }
+  .tabbtn:disabled { opacity: .45; cursor: not-allowed; }
   .current-card {
     background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
     padding: 16px;
@@ -65,6 +74,20 @@
   .current-card h3 { font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--muted); }
   .current-card .row { display: flex; gap: 24px; font-size: 13px; }
   .current-card .row dt { color: var(--muted); } .current-card .row dd { color: var(--text); }
+  .route-manual {
+    background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 12px 16px; font-size: 13px; color: var(--text);
+  }
+  .route-manual summary {
+    cursor: pointer; font-weight: 600; font-size: 13px; color: var(--text); margin-bottom: 8px;
+  }
+  .route-manual p { margin: 6px 0; line-height: 1.7; color: var(--muted); }
+  .route-manual p strong { color: var(--text); }
+  .route-manual ul { margin: 8px 0 2px 18px; line-height: 1.7; color: var(--muted); }
+  .route-manual code {
+    font-family: "JetBrains Mono", "Fira Code", monospace; font-size: 12px;
+    background: #13142a; padding: 1px 5px; border-radius: 4px; color: #c9d1d9;
+  }
   .preview-area {
     flex: 1; display: flex; flex-direction: column; min-height: 0;
   }
@@ -186,38 +209,69 @@
 
   <!-- main -->
   <div class="main">
-    <div class="current-card" id="routeCard" style="display:none">
-      <h3 data-i18n="routeTitle">本地路由（cc-switch-proxy）</h3>
-      <div id="routeStatusLine" style="font-size:13px;margin-bottom:10px;color:var(--muted)"></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
-        <button class="btn btn-sm btn-primary" id="btnRouteStart" onclick="routeStart()" data-i18n="routeStart">▶ 开启路由</button>
-        <button class="btn btn-sm btn-danger" id="btnRouteStop" onclick="routeStop()" style="display:none" data-i18n="routeStop">■ 关闭路由</button>
-        <button class="btn btn-sm btn-success" id="btnRouteApply" onclick="routeApply()" style="display:none" data-i18n="routeApply">💾 应用到 Claude Code</button>
-        <button class="btn btn-sm" onclick="routeImport()" data-i18n="routeImport">⬇ 从 config/ 导入</button>
-      </div>
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-        <strong style="font-size:13px" data-i18n="routeProviders">供应商</strong>
-        <button class="btn btn-sm" onclick="openProviderForm()" data-i18n="routeAddProvider">＋ 添加供应商</button>
-      </div>
-      <div id="routeProviderList" style="font-size:13px"></div>
+    <div class="tabbar">
+      <button class="tabbtn active" id="tabConfig" onclick="setActiveTab('config')" data-i18n="tabCurrentConfig">当前配置</button>
+      <button class="tabbtn" id="tabRoute" onclick="setActiveTab('route')" data-i18n="tabLocalRouting" disabled>本地路由</button>
     </div>
 
-    <div class="current-card" id="currentCard">
-      <h3 data-i18n="currentConfig">当前使用中的配置</h3>
-      <div id="currentInfo" data-i18n="loading">加载中...</div>
-      <div id="currentOtherFields"></div>
-    </div>
+    <!-- page 1: 当前配置 -->
+    <div id="tabPageConfig" style="display:flex;flex-direction:column;gap:16px;flex:1;min-height:0">
+      <div class="current-card" id="currentCard">
+        <h3 data-i18n="currentConfig">当前使用中的配置</h3>
+        <div id="currentInfo" data-i18n="loading">加载中...</div>
+        <div id="currentOtherFields"></div>
+      </div>
 
-    <div class="preview-area">
-      <div class="toolbar">
-        <span class="file-name" id="fileName">选择一个配置</span>
-        <div style="display:flex;gap:6px">
-          <button class="btn btn-sm btn-success" id="btnSwitch" onclick="confirmSwitch()" style="display:none" data-i18n="switchTo">🔄 切换到此配置</button>
-          <button class="btn btn-sm" id="btnSave" onclick="saveConfig()" style="display:none" data-i18n="save">💾 保存</button>
+      <div class="preview-area">
+        <div class="toolbar">
+          <span class="file-name" id="fileName">选择一个配置</span>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-sm btn-success" id="btnSwitch" onclick="confirmSwitch()" style="display:none" data-i18n="switchTo">🔄 切换到此配置</button>
+            <button class="btn btn-sm" id="btnSave" onclick="saveConfig()" style="display:none" data-i18n="save">💾 保存</button>
+          </div>
         </div>
+        <textarea id="editor" data-i18n-placeholder="selectHint" placeholder="选择左侧配置查看内容..." readonly></textarea>
+        <div class="json-error" id="jsonError" data-i18n="jsonError">JSON 格式错误</div>
       </div>
-      <textarea id="editor" data-i18n-placeholder="selectHint" placeholder="选择左侧配置查看内容..." readonly></textarea>
-      <div class="json-error" id="jsonError" data-i18n="jsonError">JSON 格式错误</div>
+    </div>
+
+    <!-- page 2: 本地路由 -->
+    <div id="tabPageRoute" style="display:none;flex-direction:column;gap:16px">
+      <div class="current-card" id="routeCard" style="display:none">
+        <h3 data-i18n="routeTitle">本地路由（cc-switch-proxy）</h3>
+        <div id="routeStatusLine" style="font-size:13px;margin-bottom:10px;color:var(--muted)"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+          <button class="btn btn-sm btn-primary" id="btnRouteStart" onclick="routeStart()" data-i18n="routeStart">▶ 开启路由</button>
+          <button class="btn btn-sm btn-danger" id="btnRouteStop" onclick="routeStop()" style="display:none" data-i18n="routeStop">■ 关闭路由</button>
+          <button class="btn btn-sm btn-success" id="btnRouteApply" onclick="routeApply()" style="display:none" data-i18n="routeApply">💾 应用到 Claude Code</button>
+          <button class="btn btn-sm" onclick="routeImport()" data-i18n="routeImport">⬇ 从 config/ 导入</button>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <strong style="font-size:13px" data-i18n="routeProviders">供应商</strong>
+          <button class="btn btn-sm" onclick="openProviderForm()" data-i18n="routeAddProvider">＋ 添加供应商</button>
+        </div>
+        <div id="routeProviderList" style="font-size:13px"></div>
+      </div>
+
+      <details class="route-manual" id="routeManual" open>
+        <summary data-i18n="routeManualTitle">📖 使用说明</summary>
+        <p><strong data-i18n="routeManualWhatTitle">这是什么</strong><span data-i18n="routeManualWhat">：本地路由让 Claude Code 指向本机网关 http://127.0.0.1:9301，所有请求由 cc-switch-proxy 转发给当前供应商；客户端不再直连上游。</span></p>
+        <p><strong data-i18n="routeManualStepsTitle">使用步骤</strong></p>
+        <ul>
+          <li data-i18n="routeManualStep1">① 添加或导入供应商：点「添加供应商」手工填写，或「从 config/ 导入」一键导入现有配置；选一个作为当前供应商。</li>
+          <li data-i18n="routeManualStep2">② 开启路由：dd-switch 拉起本机 cc-switch-proxy 进程（仅回环 127.0.0.1:9301，普通子进程，不是服务）。</li>
+          <li data-i18n="routeManualStep3">③ 应用到 Claude Code：把 ANTHROPIC_BASE_URL 指向网关并写入稳定档位别名，重启 Claude Code 之后生效。</li>
+        </ul>
+        <p data-i18n="routeManualTiers">档位模型按供应商分别填写（Haiku / Sonnet / Opus）；应用后客户端只看到 claude-sonnet-5 等稳定别名，由代理映射成当前供应商的真实模型名。</p>
+        <p><strong data-i18n="routeManualNotesTitle">注意</strong></p>
+        <ul>
+          <li data-i18n="routeManualNoteLocal">仅服务本机（127.0.0.1）；通过 SSH 管理的远程服务器不参与路由。</li>
+          <li data-i18n="routeManualNoteLock">路由开启期间不能切换配置档；点「关闭路由」会自动恢复原配置并结束进程。</li>
+          <li data-i18n="routeManualNoteRestart">代理不会随重启自动拉起；重启主机后在面板再点一次「开启路由」，会复用已有快照。</li>
+          <li data-i18n="routeManualNoteOauth">需要登录授权的供应商（GitHub Copilot、ChatGPT/Codex、xAI）只能在 cc-switch 桌面端使用；无界面守护进程只支持 API Key 类供应商。</li>
+          <li data-i18n="routeManualNoteDeps">运行该二进制需要 WebKitGTK/GTK 运行库；编译与运行依赖说明见 README「本地路由」一节与 patches/README.md。</li>
+        </ul>
+      </details>
     </div>
   </div>
 </div>
@@ -339,6 +393,27 @@ async function api(method, path, body) {
   return data;
 }
 
+// --- Tabs (当前配置 / 本地路由) ---
+let activeTab = "config";
+let routeTabAvailable = false; // 本地服务器且路由面板可用时才允许切到路由页
+
+function setActiveTab(name) {
+  if (name === "route" && !routeTabAvailable) return;
+  activeTab = name;
+  document.getElementById("tabConfig").classList.toggle("active", name === "config");
+  document.getElementById("tabRoute").classList.toggle("active", name === "route");
+  document.getElementById("tabPageConfig").style.display =
+    name === "config" ? "flex" : "none";
+  document.getElementById("tabPageRoute").style.display =
+    name === "route" ? "flex" : "none";
+}
+
+function syncRouteTab(isLocal) {
+  routeTabAvailable = isLocal;
+  document.getElementById("tabRoute").disabled = !isLocal;
+  if (!isLocal) setActiveTab("config");
+}
+
 // --- Load ---
 let routeActive = false;
 let routeApplied = false;
@@ -349,6 +424,7 @@ async function loadAll() {
   } else {
     routeActive = false;
     document.getElementById("routeCard").style.display = "none";
+    syncRouteTab(false);
     await Promise.all([loadRemoteConfigs(currentServer), loadRemoteCurrent(currentServer)]);
   }
 }
@@ -369,10 +445,12 @@ async function loadRoute() {
       api("GET", "api/route/status"),
       api("GET", "api/route/providers"),
     ]);
+    syncRouteTab(true);
     renderRoute(status);
     renderProviders(providers);
   } catch (e) {
     document.getElementById("routeCard").style.display = "none";
+    syncRouteTab(false);
   }
 }
 
