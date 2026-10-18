@@ -256,6 +256,12 @@
       <details class="route-manual" id="routeManual" open>
         <summary data-i18n="routeManualTitle">📖 使用说明</summary>
         <p><strong data-i18n="routeManualWhatTitle">这是什么</strong><span data-i18n="routeManualWhat">：本地路由让 Claude Code 指向本机网关 http://127.0.0.1:9301，所有请求由 cc-switch-proxy 转发给当前供应商；客户端不再直连上游。</span></p>
+        <p><strong data-i18n="routeManualWhyTitle">什么时候需要（仅这两种场景）</strong></p>
+        <ul>
+          <li data-i18n="routeManualWhyRelay">① 转接口：上游不是 Anthropic 协议（如 OpenAI / Gemini 格式），由代理做协议转换，Claude Code 照常使用；或把多个上游统一成一个本机入口。</li>
+          <li data-i18n="routeManualWhyProxy">② 加代理：出站请求需要经网络代理（HTTP / HTTPS / SOCKS5）才能到达上游——用 cc-switch-proxy proxy set --url http://代理机:7890 写入 cc-switch 库的全局代理（也遵循 HTTP_PROXY 等环境变量），写入后需重启路由生效。</li>
+        </ul>
+        <p data-i18n="routeManualWhyDirect">只是直连 Anthropic 协议供应商、网络通畅的话，用原来的切换流程直连即可，不必开本地路由。</p>
         <p><strong data-i18n="routeManualStepsTitle">使用步骤</strong></p>
         <ul>
           <li data-i18n="routeManualStep1">① 添加或导入供应商：点「添加供应商」手工填写，或「从 config/ 导入」一键导入现有配置；选一个作为当前供应商。</li>

@@ -102,6 +102,23 @@ from a patched cc-switch (see [`patches/`](patches/README.md)); dd-switch only
 starts/stops it and points Claude Code at it. Providers come from cc-switch's
 SQLite database.
 
+**When do you actually need it** — local routing only earns its keep in two
+situations:
+
+1. **Protocol relay (转接口)** — the upstream speaks OpenAI / Gemini style; the
+   proxy converts protocols so Claude Code keeps working as-is, or several
+   upstreams funnel behind one local endpoint.
+2. **Outbound proxy (加代理)** — reaching the upstream requires an
+   HTTP/HTTPS/SOCKS5 network proxy. Set it before starting the daemon (either
+   `cc-switch-proxy proxy set --url http://proxy-host:7890`, which writes the
+   same global-proxy setting the desktop app uses, or via `HTTP_PROXY` /
+   `HTTPS_PROXY` env vars which the daemon follows) — then restart the daemon
+   for it to take effect.
+
+If you simply connect directly to an Anthropic-protocol provider and the
+network is fine, the ordinary switch flow is enough — no need for local
+routing.
+
 **How it works**
 
 1. **Add providers** — the local-routing panel lists providers from

@@ -15,9 +15,10 @@ that lets `linux_switch` spawn the Rust router instead of LiteLLM.
   - `src-tauri/Cargo.toml` — enables tokio's `signal` feature
   - `src-tauri/Cargo.lock` — records that feature (adds `signal-hook-registry` to tokio's deps)
   - `src-tauri/src/database/mod.rs` — splits `Database::init()` into `init()` + `init_at(path)`
-  - `src-tauri/src/lib.rs` — declares `pub mod headless;` and `pub mod provider_cli;`
+  - `src-tauri/src/lib.rs` — declares `pub mod headless;`, `pub mod provider_cli;`, `pub mod proxy_cli;`
   - `src-tauri/src/headless.rs` — new module: arg parsing, DB open, proxy start/stop
   - `src-tauri/src/provider_cli.rs` — new module: `provider` subcommands (DAO-backed)
+  - `src-tauri/src/proxy_cli.rs` — new module: `proxy` subcommand (global outbound proxy, DAO-backed)
   - `src-tauri/src/bin/cc-switch-proxy.rs` — new binary entrypoint
 
 ### Apply
@@ -77,7 +78,40 @@ binary (≈13 MB), so you can skip the Rust toolchain entirely:
   ```
 - **Compile-time**: needs the full Tauri Linux prerequisites (WebKitGTK/GTK **dev**
   packages), because the proxy links the whole `cc_switch_lib` crate. This is a
-  Tauri requirement, **not** OAuth.
+  Tauri requirement, **not** OAuth. Root-free build recipe (the dev closure into
+  a sysroot; **already-installed dev packages do not appear in the download
+  closure**, so also let pkg-config/gcc fall back to the host after the sysroot):
+  ```bash
+  # 1. sysroot = dev-package closure, extracted without root
+  mkdir -p ~/.cache/cc-switch-proxy-sysroot && cd $_
+  apt-get download $(apt-get --print-uris -y install --no-install-recommends \
+    libwebkit2gtk-4.1-dev | grep "^'" | awk -F"'" '{print $2}' | xargs -n1 basename | sed 's/_.*//')
+  for f in *.deb; do dpkg-deb -x "$f" .; done && rm -f *.deb
+
+  # 2. fix the download-closure gap: dev packages' `.so` symlinks point to
+  #    runtime `.so.NN` files whose packages are absent (already-installed dev
+  #    packages do not appear in the closure); resolve them by downloading the
+  #    packages that own the missing targets
+  find $S/usr/lib -xtype l -print0 | while IFS= read -r -d '' l; do
+    tgt=$(basename "$(readlink -f "$l" 2>/dev/null || echo $l/__)")
+    path=/usr/lib/x86_64-linux-gnu/$tgt
+    if [ ! -e "$S/usr/lib/x86_64-linux-gnu/$tgt" ]; then
+      dpkg-query -S "$path" 2>/dev/null | head -1 | awk -F: '{print $1}'
+    fi
+  done | sort -u > /tmp/rt-pkgs.txt
+  cd $S && apt-get download $(cat /tmp/rt-pkgs.txt) && for f in *.deb; do dpkg-deb -x "$f" .; done && rm -f *.deb
+
+  # 3. build env: sysroot first, host dirs as fallback gaps are filled
+  export S=~/.cache/cc-switch-proxy-sysroot
+  export PKG_CONFIG_SYSROOT_DIR=$S
+  export PKG_CONFIG_LIBDIR=$S/usr/lib/x86_64-linux-gnu/pkgconfig:$S/usr/lib/pkgconfig:$S/usr/share/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
+  export CPATH=$S/usr/include:$S/usr/include/x86_64-linux-gnu:/usr/include:/usr/include/x86_64-linux-gnu
+  export LIBRARY_PATH=$S/usr/lib/x86_64-linux-gnu:$S/usr/lib:/usr/lib/x86_64-linux-gnu:/usr/lib
+  export LD_LIBRARY_PATH=$S/usr/lib/x86_64-linux-gnu:$S/usr/lib:/usr/lib/x86_64-linux-gnu:/usr/lib
+  # Rust ≥1.95 defaults to rust-lld through a gcc-ld shim that drops -L args;
+  # switch back to the GNU linker, which honors LIBRARY_PATH
+  export RUSTFLAGS="-C linker-features=-lld"
+  ```
 - **OAuth**: login-based providers (GitHub Copilot, ChatGPT/Codex, xAI) need the
   cc-switch **desktop** app — the headless daemon has no `AppHandle`, so only
   API-key providers (Anthropic, OpenAI-compatible, Gemini, OpenRouter, …) work.
@@ -115,14 +149,38 @@ cc-switch-proxy provider import --dir ./config --set-current   # skips sample.js
 `{"env": {…}}` becomes the provider's `settingsConfig`. `--set-current` picks a
 provider so the router has something to forward to.
 
+### Global outbound proxy subcommand
+
+Local routing is only worth running for two reasons: **① protocol relay**
+(upstream speaks OpenAI/Gemini style) and **② outbound proxy** (reaching the
+upstream requires an HTTP/HTTPS/SOCKS5 network proxy). The `proxy` subcommand
+serves case ② on a headless host, by writing the same `global_proxy_url`
+setting the desktop app's "全局代理" uses:
+
+```bash
+cc-switch-proxy proxy get
+cc-switch-proxy proxy set --url http://proxy-host:7890   # http/https/socks5/socks5h
+cc-switch-proxy proxy clear
+```
+
+Without an explicit setting the daemon's HTTP client follows
+`HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` (via reqwest's system-proxy logic),
+with an anti-recursion guard that bypasses loopback proxies. Configured in the
+DB, the setting wins over env vars. **The daemon reads it once at startup** —
+restart `cc-switch-proxy` after `set`/`clear` for it to take effect
+(dd-switch restarts the child whenever the feature is toggled off/on).
+
 ### Caveats
 
 - **Verified** on Ubuntu 24.04 with Rust 1.95: `cargo build --bin cc-switch-proxy`
-  links, `cargo test --lib headless` and `cargo test --lib provider_cli` pass
-  (8 tests total), `cargo fmt`/`clippy -D warnings` are clean, the daemon boots
-  (`/health` → 200, `/status` → running, clean SIGTERM shutdown), and the
-  `provider add/list/update/set-current/delete/import` subcommands were
-  exercised end-to-end against a throwaway DB.
+  links, `cargo test --lib headless provider_cli proxy_cli` passes (14 tests
+  across the three subcommand modules), `cargo fmt`/`clippy -D warnings` are
+  clean, the full `cargo test --lib` suite is green (3637 passed — the upstream
+  codex timing test occasionally flaps on a heavily loaded box but passes
+  standalone), the daemon boots
+  (`/health` → 200, `/status` → running, clean SIGTERM shutdown), and both
+  `provider add/list/update/set-current/delete/import` and `proxy
+  get/set/clear` subcommands were exercised end-to-end against throwaway DBs.
 - The binary still links Tauri/WebKitGTK runtime libraries (it shares the crate
   with the desktop app), so a headless host needs the WebKitGTK runtime installed
   to *run* it — and the full Tauri Linux build prerequisites to compile it.

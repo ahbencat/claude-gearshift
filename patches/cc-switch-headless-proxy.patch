@@ -25,10 +25,10 @@ index d596fd27..7faf1434 100644
  bytes = "1.5"
 diff --git a/src-tauri/src/bin/cc-switch-proxy.rs b/src-tauri/src/bin/cc-switch-proxy.rs
 new file mode 100644
-index 00000000..e1a47bf5
+index 00000000..c3bb29a8
 --- /dev/null
 +++ b/src-tauri/src/bin/cc-switch-proxy.rs
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,45 @@
 +//! `cc-switch-proxy` — CC Switch 本地路由的无界面入口。
 +//!
 +//! 只做参数解析和运行时搭建，真正的逻辑在 `cc_switch_lib::headless`。
@@ -43,6 +43,15 @@ index 00000000..e1a47bf5
 +    // `provider` 子命令走同步的 DAO 路径，不启动代理服务。
 +    if args.first().map(String::as_str) == Some("provider") {
 +        if let Err(e) = cc_switch_lib::provider_cli::run(&args[1..]) {
++            eprintln!("cc-switch-proxy: {e}");
++            std::process::exit(1);
++        }
++        return;
++    }
++
++    // `proxy` 子命令同样只读写 DAO（全局出站代理），不启动代理服务。
++    if args.first().map(String::as_str) == Some("proxy") {
++        if let Err(e) = cc_switch_lib::proxy_cli::run(&args[1..]) {
 +            eprintln!("cc-switch-proxy: {e}");
 +            std::process::exit(1);
 +        }
@@ -96,10 +105,10 @@ index e00598dc..eb91c938 100644
          conn.execute("PRAGMA foreign_keys = ON;", [])
 diff --git a/src-tauri/src/headless.rs b/src-tauri/src/headless.rs
 new file mode 100644
-index 00000000..2032d2dc
+index 00000000..4e8d4a60
 --- /dev/null
 +++ b/src-tauri/src/headless.rs
-@@ -0,0 +1,245 @@
+@@ -0,0 +1,247 @@
 +//! 无界面的本地路由守护进程（headless）。
 +//!
 +//! 复用桌面端同一套 `proxy` 引擎，但不启动 Tauri 窗口/托盘，适合在
@@ -134,6 +143,8 @@ index 00000000..2032d2dc
 +子命令:
 +  provider ...    管理数据库里的供应商（list/add/update/delete/set-current/import）
 +                  见 `cc-switch-proxy provider --help`
++  proxy ...       管理全局出站代理（get/set/clear），本地路由“加代理”场景入口
++                  见 `cc-switch-proxy proxy --help`
 +
 +供应商与模型来自 CC Switch 的数据库；请先用桌面端 CC Switch 配置好供应商。
 +环境变量 RUST_LOG 控制日志级别（off/error/warn/info/debug/trace），默认 info。
@@ -346,7 +357,7 @@ index 00000000..2032d2dc
 +    }
 +}
 diff --git a/src-tauri/src/lib.rs b/src-tauri/src/lib.rs
-index 263a0b93..5725b23d 100644
+index 263a0b93..4061d20d 100644
 --- a/src-tauri/src/lib.rs
 +++ b/src-tauri/src/lib.rs
 @@ -16,6 +16,7 @@ mod error;
@@ -357,20 +368,22 @@ index 263a0b93..5725b23d 100644
  pub mod hermes_config;
  mod init_status;
  mod jsonc_document;
-@@ -34,6 +35,7 @@ mod pi_config;
+@@ -34,7 +35,9 @@ mod pi_config;
  mod prompt;
  mod prompt_files;
  mod provider;
 +pub mod provider_cli;
  mod proxy;
++pub mod proxy_cli;
  mod services;
  mod session_manager;
+ mod settings;
 diff --git a/src-tauri/src/provider_cli.rs b/src-tauri/src/provider_cli.rs
 new file mode 100644
-index 00000000..8887fb6f
+index 00000000..279e0abf
 --- /dev/null
 +++ b/src-tauri/src/provider_cli.rs
-@@ -0,0 +1,404 @@
+@@ -0,0 +1,421 @@
 +//! `cc-switch-proxy provider` — 在无桌面端的情况下管理 cc-switch DB 里的供应商。
 +//!
 +//! 复用 cc-switch 自己的 DAO（`Database::save_provider` / `set_current_provider` …），
@@ -389,11 +402,14 @@ index 00000000..8887fb6f
 +//!
 +//! 所有命令都往 stdout 打印一行 JSON，便于调用方解析。
 +
++use crate::app_config::AppType;
 +use crate::database::Database;
++use crate::mode::current::{provider_for, Purpose};
 +use crate::provider::Provider;
 +use serde_json::{json, Map, Value};
 +use std::collections::HashMap;
 +use std::path::Path;
++use std::str::FromStr;
 +
 +pub const PROVIDER_HELP: &str = "\
 +cc-switch-proxy provider — 管理 cc-switch DB 里的供应商（无桌面端）
@@ -459,7 +475,14 @@ index 00000000..8887fb6f
 +    let app = app_of(&flags);
 +
 +    let providers = db.get_all_providers(&app).map_err(|e| e.to_string())?;
-+    let current = db.get_current_provider(&app).map_err(|e| e.to_string())?;
++    // CLI 语境里 list 的 "current" 是 DB 里的直连指针（代理路由是运行态，见
++    // route_apply），因此走 Purpose::Direct 读指针。
++    let current = provider_for(
++        &db,
++        &AppType::from_str(&app).map_err(|e| e.to_string())?,
++        Purpose::Direct,
++    )
++    .map_err(|e| e.to_string())?;
 +    let items: Vec<Value> = providers
 +        .values()
 +        .map(|p| {
@@ -525,7 +548,14 @@ index 00000000..8887fb6f
 +            .map_err(|e| e.to_string())?;
 +    }
 +
-+    let current = db.get_current_provider(&app).ok().flatten();
++    // add/更新后的 current 展示同样只读直连指针。
++    let current = provider_for(
++        &db,
++        &AppType::from_str(&app).map_err(|e| e.to_string())?,
++        Purpose::Direct,
++    )
++    .ok()
++    .flatten();
 +    emit(&json!({ "ok": true, "app": app, "id": id, "current": current }));
 +    Ok(())
 +}
@@ -773,5 +803,194 @@ index 00000000..8887fb6f
 +            Some("https://x")
 +        );
 +        assert!(env.get("ANTHROPIC_AUTH_TOKEN").is_none());
++    }
++}
+diff --git a/src-tauri/src/proxy_cli.rs b/src-tauri/src/proxy_cli.rs
+new file mode 100644
+index 00000000..1a9b0251
+--- /dev/null
++++ b/src-tauri/src/proxy_cli.rs
+@@ -0,0 +1,183 @@
++//! `cc-switch-proxy proxy` — 在无桌面端的情况下管理 cc-switch DB 里的全局出站代理。
++//!
++//! 本地路由的出站代理来自两层：DB 里的 `global_proxy_url` 设置（本子命令读写，
++//! 与桌面端 `get/set_global_proxy_url` 同一键），以及环境变量兜底
++//! （`HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`，reqwest 自动跟随）。守护进程
++//! 只在启动时读一次，改完需重启 cc-switch-proxy 才生效。
++//!
++//! 用法：
++//!   cc-switch-proxy proxy get     [--db PATH]
++//!   cc-switch-proxy proxy set     --url URL [--db PATH]
++//!   cc-switch-proxy proxy clear   [--db PATH]
++//!
++//! 所有命令打印一行 JSON（URL 不打码——这是调用方自己的 DB，非共享凭据）。
++
++use crate::database::Database;
++use crate::proxy::http_client;
++use serde_json::{json, Value};
++use std::collections::HashMap;
++use std::path::Path;
++
++pub const PROXY_HELP: &str = "\
++cc-switch-proxy proxy — 管理本地路由的全局出站代理（无桌面端）
++
++本地路由只有两个存在理由：① 转接口（上游非 Anthropic 协议时的协议转换）；
++② 加代理（出站需要 HTTP/HTTPS/SOCKS5 网络代理）。本子命令负责第 ② 类：
++读写 cc-switch DB 里的全局出站代理 URL，桌面端与 headless 共用同一份设置。
++
++用法:
++  cc-switch-proxy proxy <get|set|clear> [选项]
++
++选项:
++  --url <URL>   set 必填，支持 http / https / socks5 / socks5h
++  --db <PATH>   SQLite 数据库路径，默认 ~/.cc-switch/cc-switch.db
++
++注意:
++  - URL 也可以不写进库，直接用环境变量（HTTP_PROXY / HTTPS_PROXY / ALL_PROXY），
++    reqwest 会自动跟随；两种方式都配置时以 DB 设置优先。
++  - 守护进程只在启动时读取一次；写库后需重启 cc-switch-proxy 才生效。
++
++输出: 单行 JSON。
++";
++
++/// 分发 `proxy` 子命令（`args` 不含开头的 `proxy`）。
++pub fn run(args: &[String]) -> Result<(), String> {
++    let action = args.first().map(String::as_str).unwrap_or("get");
++    let rest: Vec<String> = args.get(1..).unwrap_or(&[]).to_vec();
++
++    match action {
++        "-h" | "--help" | "help" => {
++            println!("{PROXY_HELP}");
++            Ok(())
++        }
++        "get" => cmd_get(&rest),
++        "set" => cmd_set(&rest),
++        "clear" => cmd_clear(&rest),
++        other => Err(format!(
++            "未知的 proxy 子命令: {other}（用 `cc-switch-proxy proxy --help`）"
++        )),
++    }
++}
++
++fn cmd_get(args: &[String]) -> Result<(), String> {
++    let flags = parse_flags(args)?;
++    let db = open_db(&flags)?;
++    let url = db.get_global_proxy_url().map_err(|e| e.to_string())?;
++    emit(&json_out(url.as_deref()));
++    Ok(())
++}
++
++fn cmd_set(args: &[String]) -> Result<(), String> {
++    let flags = parse_flags(args)?;
++    let url = flags
++        .get("url")
++        .map(String::as_str)
++        .filter(|u| !u.trim().is_empty())
++        .ok_or_else(|| "set 需要 --url（http / https / socks5 / socks5h）".to_string())?
++        .trim()
++        .to_string();
++
++    // 与代理转发同一套校验（scheme 白名单 + client 可构建）；拒绝 `--url ''` 直接 clear。
++    http_client::validate_proxy(Some(&url)).map_err(|e| format!("无效的代理 URL: {e}"))?;
++
++    let db = open_db(&flags)?;
++    db.set_global_proxy_url(Some(&url))
++        .map_err(|e| e.to_string())?;
++    emit(&json_out(Some(&url)));
++    Ok(())
++}
++
++fn cmd_clear(args: &[String]) -> Result<(), String> {
++    let flags = parse_flags(args)?;
++    let db = open_db(&flags)?;
++    db.set_global_proxy_url(None).map_err(|e| e.to_string())?;
++    emit(&json_out(None));
++    Ok(())
++}
++
++/// 输出统一带一个生效提示：init 只在 daemon 启动时执行一次。
++fn json_out(url: Option<&str>) -> Value {
++    json!({
++        "global_proxy_url": url,
++        "effective": "重启 cc-switch-proxy 后生效（或由环境变量兜底）",
++    })
++}
++
++fn parse_flags(args: &[String]) -> Result<HashMap<String, String>, String> {
++    let mut flags = HashMap::new();
++    let mut iter = args.iter();
++    while let Some(arg) = iter.next() {
++        let Some(body) = arg.strip_prefix("--") else {
++            return Err(format!("意外的位置参数: {arg}（选项都以 -- 开头）"));
++        };
++        if let Some((key, value)) = body.split_once('=') {
++            flags.insert(key.to_string(), value.to_string());
++        } else if iter
++            .clone()
++            .next()
++            .is_some_and(|next| !next.starts_with("--"))
++        {
++            flags.insert(body.to_string(), iter.next().unwrap().clone());
++        } else {
++            flags.insert(body.to_string(), "true".to_string());
++        }
++    }
++    Ok(flags)
++}
++
++fn open_db(flags: &HashMap<String, String>) -> Result<Database, String> {
++    match flags.get("db") {
++        Some(path) => Database::init_at(Path::new(path)),
++        None => Database::init(),
++    }
++    .map_err(|e| format!("打开数据库失败: {e}"))
++}
++
++fn emit(value: &Value) {
++    println!(
++        "{}",
++        serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string())
++    );
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn args(items: &[&str]) -> Vec<String> {
++        items.iter().map(|s| s.to_string()).collect()
++    }
++
++    #[test]
++    fn run_dispatches_get_set_clear() {
++        // 未知的子命令必须报错，而不是静默走 get
++        assert!(run(&args(&["bogus"])).is_err());
++        assert!(run(&args(&["help"])).is_ok());
++    }
++
++    #[test]
++    fn set_requires_non_empty_url() {
++        let err = run(&args(&["set", "--db", "/tmp/x.db"])).unwrap_err();
++        assert!(err.contains("--url"), "got: {err}");
++        let err = run(&args(&["set", "--url", "  ", "--db", "/tmp/x.db"])).unwrap_err();
++        assert!(err.contains("--url"), "got: {err}");
++    }
++
++    #[test]
++    fn set_rejects_bad_scheme() {
++        let err = run(&args(&[
++            "set",
++            "--url",
++            "ftp://1.2.3.4",
++            "--db",
++            "/tmp/x.db",
++        ]))
++        .unwrap_err();
++        assert!(err.contains("无效的代理 URL"), "got: {err}");
++    }
++
++    #[test]
++    fn parse_flags_rejects_positional() {
++        assert!(parse_flags(&args(&["oops"])).is_err());
 +    }
 +}
