@@ -4,12 +4,12 @@
 
 Shift gears for Claude Code — quickly switch model/provider configs on Linux while leaving every other setting untouched.
 
-Two ways to use it, sharing the same `config/` directory and the same switch semantics (replace `env` only → atomic write):
+The Web UI (`dd-switch/`, Flask + waitress, browser-based, password-protected)
+is the supported interface, working off the shared `config/` directory with
+the same switch semantics (replace `env` only → atomic write).
 
-| Mode | Path | Description |
-|---|---|---|
-| CLI script | `switch_claude_config.sh` | Interactive menu, `bash` + `jq` (legacy — to be retired) |
-| Web UI | `dd-switch/` | Flask + waitress, browser-based, password-protected |
+> **Note:** the terminal script `switch_claude_config.sh` was retired and
+> removed — the Web UI is the only supported interface.
 
 ## Why this panel
 
@@ -33,20 +33,6 @@ One password-protected Web UI fixes that:
 
 No more per-server manual editing, no more drift between machines.
 
-## CLI Script Usage
-
-```bash
-# Reads configs from ./config/ by default
-./switch_claude_config.sh
-
-# Or point it at another config directory
-./switch_claude_config.sh ~/.claude/configs/
-```
-
-> **Roadmap: the CLI script will be retired.** New capabilities (local routing,
-> upstream-protocol selection, outbound proxy) are Web UI only — use the Web UI
-> going forward.
-
 ## Web UI Usage
 
 ```bash
@@ -62,7 +48,6 @@ Requires `flask` + `waitress` + `paramiko` + `cryptography` — `pip install fla
 - Production mode serves via waitress; `DD_SWITCH_DEBUG=1` falls back to Flask's dev server
 - Browse / create / edit / delete / switch configs under `config/` right from the page
 - 中/EN language toggle in the top-right corner (your choice is remembered)
-- Same switch semantics as the CLI script — both can be used interchangeably
 - Optional **local routing** with its own config page: manage providers (stored in cc-switch's DB), start/stop the `cc-switch-proxy` gateway, and apply it to Claude Code — see [Local Routing](#local-routing-cc-switch-proxy-optional)
 
 ### Multi-Server SSH Support
@@ -193,8 +178,7 @@ systemctl --user restart dd-switch
 - The process does not survive a reboot. After a reboot, "Start routing"
   re-spawns it and reuses the existing snapshot.
 - While routing is active, profile switching is locked (it would corrupt the
-  restore snapshot) — stop routing first. `switch_claude_config.sh` refuses to
-  run for the same reason.
+  restore snapshot) — stop routing first.
 - Run the tests with `python3 -m unittest discover -s tests` from `dd-switch/`.
 
 ## Config Directory Structure
@@ -228,32 +212,18 @@ More optional fields: [Claude Code environment variables](https://docs.anthropic
 | Step | What it does |
 |---|---|
 | **Scan** | Walks the config directory for `.json` files |
-| **Validate** | Syntax-checks each file with `jq`; invalid files are skipped with the reason |
+| **Validate** | Syntax-checks each file; invalid files are skipped with the reason |
 | **Summarize** | Shows the current config's Base URL and Model |
-| **Select** | Interactive menu to pick a config |
-| **Preview** | Prints the full selected file before switching |
+| **Select** | Pick a config from the sidebar list |
+| **Preview** | Shows the full selected file before switching |
 | **Confirm** | Switches only after explicit confirmation |
-| **Back up** | Web UI backs up the current config to `settings.json.bak.<timestamp>` before switching; the CLI script overwrites directly |
+| **Back up** | Backs up the current config to `settings.json.bak.<timestamp>` before switching |
 | **Merge** | Replaces only `env`, preserving `theme` / `permissions` / `actions` / `skills` |
 | **Atomic write** | Temp file + `mv rename` — no half-written JSON |
 | **Multi-server** | Manage configs on multiple remote servers via SSH key auth |
 | **Passphrase encryption** | SSH key passphrases encrypted with Web UI password (PBKDF2 + Fernet) |
 
 ## Dependencies
-
-**CLI script** (`switch_claude_config.sh`) — no Python needed:
-
-- `bash` 4.0+ (`mapfile` support)
-- `jq` (required — JSON validation & merge)
-
-```bash
-# Ubuntu/Debian
-sudo apt install jq
-# macOS
-brew install jq
-# Arch Linux
-sudo pacman -S jq
-```
 
 **Web UI** (`dd-switch/`) — Python 3.10+, listed in `requirements.txt`:
 
@@ -280,32 +250,8 @@ without it.
 mkdir -p config
 cp ~/.claude/settings.json config/cf_default.json
 # edit or fetch additional configs
-
-# 2. Switch
-./switch_claude_config.sh
 ```
 
-```
-════════════════════════════════════════════
- JSON 文件校验结果 / JSON Validation Results
-════════════════════════════════════════════
-
-  ✅ 有效文件: 3 个 / Valid files: 3
-
-════════════════════════════════════════════
- 当前配置 / Current Config
-════════════════════════════════════════════
-   路径 / Path: /home/user/settings.json
-   Base URL: https://ark.cn-beijing.volces.com/api/coding
-   Model:    deepseek-v4-flash
-
-════════════════════════════════════════════
- 请选择要切换的配置文件 / Select a config file:
-════════════════════════════════════════════
-
-1) config/cf_anthropic.json
-2) config/cf_ark_177.json
-3) config/cf_openrouter.json
-
-请输入编号 (或 0 退出) / Enter a number (or 0 to quit):
-```
+2. Switch — in the Web UI: pick a config in the left sidebar, review it in
+   the preview pane, confirm to switch. The current config is backed up
+   automatically (`settings.json.bak.<timestamp>`); only `env` is replaced.

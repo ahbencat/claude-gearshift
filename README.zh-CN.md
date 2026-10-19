@@ -4,12 +4,11 @@
 
 给 Claude Code 换挡 —— 在 Linux 上快速切换模型/供应商配置，保留其他设置不变。
 
-提供两种使用方式，共用同一个 `config/` 目录和同一套切换逻辑（只替换 `env` → 原子写入）：
+Web UI（`dd-switch/`，Flask + waitress，浏览器操作，密码保护）是受支持的
+使用方式，共用 `config/` 目录和同一套切换逻辑（只替换 `env` → 原子写入）。
 
-| 方式 | 路径 | 说明 |
-|---|---|---|
-| 终端脚本 | `switch_claude_config.sh` | 交互式菜单，`bash` + `jq`（旧版，将退役） |
-| Web UI | `dd-switch/` | Flask + waitress，浏览器操作，密码保护 |
+> **说明：** 终端脚本 `switch_claude_config.sh` 已退役并删除——Web UI 是唯一
+> 受支持的使用方式。
 
 ## 这个面板解决什么问题
 
@@ -29,19 +28,6 @@
 
 不必再逐台手改，也不会出现机器之间的配置漂移。
 
-## 终端脚本用法
-
-```bash
-# 默认从 ./config/ 目录读取配置
-./switch_claude_config.sh
-
-# 指定配置目录
-./switch_claude_config.sh ~/.claude/configs/
-```
-
-> **路线图：终端脚本将退役。** 新能力（本地路由、上游协议选择、出站代理）只有
-> Web UI 有——以后请用 Web UI。
-
 ## Web UI 用法
 
 ```bash
@@ -57,7 +43,6 @@ python3 app.py
 - 生产模式 waitress；`DD_SWITCH_DEBUG=1` 时走 Flask dev server
 - 页面可直接查看 / 新建 / 编辑 / 删除 / 切换 `config/` 下的配置
 - 右上角 中/EN 语言切换（记忆选择）
-- 切换逻辑与终端脚本一致，两种方式可混用
 - 可选的**本地路由**有独立配置页：管理供应商（存在 cc-switch 的库里）、启停 `cc-switch-proxy` 网关，并应用到 Claude Code——见[本地路由](#本地路由cc-switch-proxy可选)
 
 ### 多服务器 SSH 支持
@@ -173,7 +158,6 @@ systemctl --user restart dd-switch
   路由控制。
 - 该进程不会在重启后存活。重启后点“开启路由”会重新拉起并复用已有快照。
 - 路由开启期间禁止切换配置档（会破坏恢复快照）——请先关闭路由。
-  `switch_claude_config.sh` 出于同样原因也会拒绝运行。
 - 测试：在 `dd-switch/` 下执行 `python3 -m unittest discover -s tests`。
 
 ## 配置目录结构
@@ -207,32 +191,18 @@ config/
 | 步骤 | 说明 |
 |---|---|
 | **遍历** | 扫描指定目录下所有 `.json` 文件 |
-| **校验** | 使用 `jq` 检测 JSON 语法错误，无效文件跳过并列出原因 |
+| **校验** | 检测 JSON 语法错误，无效文件跳过并列出原因 |
 | **展示** | 显示当前配置的 Base URL 和 Model |
-| **选择** | 交互菜单选择要切换的配置 |
+| **选择** | 在左侧列表选择要切换的配置 |
 | **预览** | 切换前展示选中文件的完整内容 |
 | **确认** | 确认后才执行切换 |
-| **备份** | Web UI 切换前自动备份原配置到 `settings.json.bak.<时间戳>`；终端脚本直接覆盖，不备份 |
+| **备份** | 切换前自动备份原配置到 `settings.json.bak.<时间戳>` |
 | **合并** | 只替换 `env`（模型配置），保留 `theme` / `permissions` / `actions` / `skills` 等其他字段 |
 | **原子写入** | 临时文件 → `mv rename`，避免半写导致 JSON 损坏 |
 | **多服务器** | 通过 SSH 密钥认证管理多台远程服务器 |
 | **密码短语加密** | SSH 密钥密码短语使用 Web UI 密码加密（PBKDF2 + Fernet） |
 
 ## 依赖
-
-**CLI 脚本**（`switch_claude_config.sh`）— 不需要 Python：
-
-- `bash` 4.0+（`mapfile` 支持）
-- `jq`（必需，JSON 校验与合并）
-
-```bash
-# Ubuntu/Debian
-sudo apt install jq
-# macOS
-brew install jq
-# Arch Linux
-sudo pacman -S jq
-```
 
 **Web UI**（`dd-switch/`）— 需要 Python 3.10+，依赖列在 `requirements.txt`：
 
@@ -258,32 +228,7 @@ cc-switch 构建出的 `cc-switch-proxy` 守护进程提供（见
 mkdir -p config
 cp ~/.claude/settings.json config/cf_default.json
 # 手动编辑或下载其他配置
-
-# 2. 切换
-./switch_claude_config.sh
 ```
 
-```
-════════════════════════════════════════════
- JSON 文件校验结果 / JSON Validation Results
-════════════════════════════════════════════
-
-  ✅ 有效文件: 3 个 / Valid files: 3
-
-════════════════════════════════════════════
- 当前配置 / Current Config
-════════════════════════════════════════════
-   路径 / Path: /home/user/settings.json
-   Base URL: https://ark.cn-beijing.volces.com/api/coding
-   Model:    deepseek-v4-flash
-
-════════════════════════════════════════════
- 请选择要切换的配置文件 / Select a config file:
-════════════════════════════════════════════
-
-1) config/cf_anthropic.json
-2) config/cf_ark_177.json
-3) config/cf_openrouter.json
-
-请输入编号 (或 0 退出) / Enter a number (or 0 to quit):
-```
+2. 切换——在 Web UI 里：左侧列表选一份配置，在预览区检查内容，确认切换。
+   当前配置自动备份（`settings.json.bak.<时间戳>`），只替换 `env`。
