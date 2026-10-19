@@ -102,21 +102,20 @@ from a patched cc-switch (see [`patches/`](patches/README.md)); dd-switch only
 starts/stops it and points Claude Code at it. Providers come from cc-switch's
 SQLite database.
 
-> **⚠️ Status (2026-10-26): only the outbound-proxy use case is verified.**
-> Protocol relay is **not working end-to-end yet**: providers created from the
-> Web UI or `cc-switch-proxy provider add` land in the DB without protocol
-> metadata (`meta.apiFormat` unset), so the proxy always forwards in Anthropic
-> format (passthrough). A top-level `"api_format"` in `config/*.json`
-> (`"openai_chat"` / `"openai_responses"` / `"gemini_native"`) is honored on
-> `provider import`, but the add/edit form has no protocol input yet.
+> **Status (2026-10-19): both use cases work.** Each provider declares its
+> upstream protocol via the "Upstream protocol" dropdown in the local-routing
+> page (`anthropic` = passthrough, the default; `openai_chat` /
+> `openai_responses` / `gemini_native` trigger conversion). It is stored as
+> `meta.apiFormat` in cc-switch's DB — the key the proxy reads. A top-level
+> `"api_format"` in `config/*.json` is likewise honored on `provider import`.
 
 **When do you actually need it** — local routing only earns its keep in two
 situations:
 
-1. **Protocol relay (转接口)** ⚠️ not yet working, see status above — the
-   upstream speaks OpenAI / Gemini style; the proxy converts protocols so
-   Claude Code keeps working as-is, or several upstreams funnel behind one
-   local endpoint.
+1. **Protocol relay (转接口)** — the upstream speaks OpenAI / Gemini style; the
+   proxy converts protocols so Claude Code keeps working as-is, or several
+   upstreams funnel behind one local endpoint. Set the provider's upstream
+   protocol when adding it (defaults to `anthropic` passthrough).
 2. **Outbound proxy (加代理)** — reaching the upstream requires an
    HTTP/HTTPS/SOCKS5 network proxy. Set it before starting the daemon: the
    local-routing page in the Web UI has an "Outbound proxy" box (it writes the

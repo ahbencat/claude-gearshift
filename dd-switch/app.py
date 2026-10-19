@@ -409,6 +409,7 @@ def route_provider_save(payload):
     for flag, key in (
         ("name", "name"), ("base-url", "base_url"), ("token", "token"),
         ("model", "model"), ("haiku", "haiku"), ("sonnet", "sonnet"), ("opus", "opus"),
+        ("api-format", "api_format"),
     ):
         value = payload.get(key)
         if value is not None:
@@ -871,6 +872,12 @@ def api_route_provider_save():
     token = body.get("token")
     if isinstance(token, str) and token.strip():
         payload["token"] = token.strip()
+    # 上游协议声明（meta.apiFormat 的唯一写入口）；空=不改，非法值直接 400。
+    api_format = (body.get("api_format") or "").strip()
+    if api_format:
+        if api_format not in ("anthropic", "openai_chat", "openai_responses", "gemini_native"):
+            return jsonify({"error": f"未知的上游协议格式: {api_format}"}), 400
+        payload["api_format"] = api_format
     if not payload["id"] and not payload["name"]:
         return jsonify({"error": "供应商名称必填"}), 400
     with _route_lock:

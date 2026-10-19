@@ -145,11 +145,11 @@ key 提取兜底链（`extract_key`）：`ANTHROPIC_AUTH_TOKEN → ANTHROPIC_API
 
 ## 5. 协议转换（“转接口”能力到底在哪）
 
-引擎**不做** Claude 入站 → OpenAI 上游的转换；矩阵如下：
+Claude 入站**缺省**不转换（上游须 Anthropic 兼容）；但 provider 声明 `api_format` 后引擎会做转换。判定链：`forwarder.rs`（`resolve_claude_api_format` → 兜底 `get_claude_api_format`）→ `needs_transform` → `transform_claude_request_for_api_format`（`proxy/providers/claude.rs L339`）。矩阵如下：
 
 | 入站客户端协议 | 上游协议 | 是否转换 | 说明 |
 |---|---|---|---|
-| Anthropic Messages（Claude Code） | Anthropic 兼容 | 否（原样转发+模型重写） | 上游必须是 Anthropic 兼容中转/官方 |
+| Anthropic Messages（Claude Code） | 按 provider 的 `api_format`（`meta.apiFormat` 为 SSOT，legacy 读 `settings_config.api_format`）：缺省 `anthropic` | 缺省否（原样转发+模型重写）；声明后是 | `openai_chat` → `anthropic_to_openai_with_reasoning_content`；`openai_responses` → `anthropic_to_responses`；`gemini_native` → `anthropic_to_gemini_with_shadow`；非法值/缺省 → 原样返回 |
 | OpenAI Responses（Codex 系） | Responses 原生 | 否 | 官方直通 + namespace/xAI 特殊清洗 |
 | OpenAI Responses | Chat Completions | **是**（`transform_codex_chat` 等） | `wire_api="chat"` 触发 |
 | OpenAI Responses | Anthropic Messages | **是**（`transform_codex_anthropic`、流式 `streaming_codex_anthropic`） | `api_format/wire_api="anthropic"` 触发；`/responses/compact` 端点同样命中 |
@@ -196,7 +196,7 @@ key 提取兜底链（`extract_key`）：`ANTHROPIC_AUTH_TOKEN → ANTHROPIC_API
 
 **边界与限制（写卡前自查）**：
 
-- Claude 入站的上游**必须 Anthropic 兼容**（§5 矩阵第一行）；想让 Codex/OpenCode 吃 OpenAI 或 Anthropic 兼容上游，用 Codex 面的 `wire_api`/`api_format`。
+- Claude 入站**缺省**要求上游 Anthropic 兼容；声明 `meta.apiFormat`（或 legacy `settings_config.api_format`）后引擎按 §5 第一行做转换。想让 Codex/OpenCode 吃 OpenAI 或 Anthropic 兼容上游，用 Codex 面的 `wire_api`/`api_format`。
 - OAuth 托管卡（Codex 官方账号、xAI OAuth、GitHub Copilot）与自己手写的 key 卡不能混写凭据字段，`is_*_oauth()` 有守卫；复制这些结构做自定义卡没有意义。
 - `Pi / Mcode` 无适配器，代理不管这两类 app。
 - 本地路由整体只在 **①转接口（上游非客户端原生协议，用 Codex 面的 wire_api 声明）②加代理（`proxy set`/HTTP(S)_PROXY 环境兜底）** 两种场景有价值；直连通畅不必开。

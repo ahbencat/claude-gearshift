@@ -138,7 +138,7 @@ migrations always match. Every command prints one line of JSON to stdout.
 cc-switch-proxy provider list --db ~/.cc-switch/cc-switch.db
 cc-switch-proxy provider add --name "Relay" --base-url https://api.example.com \
     --token sk-... --sonnet claude-sonnet-5 --haiku claude-haiku-5-5 \
-    --opus claude-opus-5 --set-current
+    --opus claude-opus-5 --api-format openai_chat --set-current
 cc-switch-proxy provider update --id relay --token sk-new
 cc-switch-proxy provider set-current --id relay
 cc-switch-proxy provider delete --id relay
@@ -148,6 +148,15 @@ cc-switch-proxy provider import --dir ./config --set-current   # skips sample.js
 `import` treats each `config/*.json` as a Claude provider: the file's
 `{"env": {…}}` becomes the provider's `settingsConfig`. `--set-current` picks a
 provider so the router has something to forward to.
+
+`--api-format` declares the upstream protocol and is stored as the provider's
+`meta.apiFormat` — the key the proxy reads to decide protocol conversion
+(`anthropic` = passthrough, the default when omitted; `openai_chat`,
+`openai_responses`, `gemini_native` trigger conversion). Unknown values are
+rejected. `update` without the flag keeps the stored value. A top-level
+`"api_format"` in an imported `config/*.json` is honored the same way (legacy
+path). `list` reports it as `apiFormat` (absent on rows written by older
+binaries).
 
 ### Global outbound proxy subcommand
 

@@ -350,6 +350,15 @@
     <input type="text" id="rpName" data-i18n-placeholder="routeName" placeholder="名称" style="width:100%;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px;margin-bottom:8px" />
     <input type="text" id="rpBaseUrl" placeholder="Base URL（https://…）" style="width:100%;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px;margin-bottom:8px" />
     <input type="password" id="rpToken" data-i18n-placeholder="routeTokenHint" placeholder="凭据 Token（留空表示不修改）" style="width:100%;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px;margin-bottom:8px" />
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:8px">
+      <span data-i18n="routeApiFormat">上游协议</span>
+      <select id="rpApiFormat" style="flex:1;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px">
+        <option value="anthropic" data-i18n="routeApiFormatAnthropic">anthropic（默认，原样透传）</option>
+        <option value="openai_chat" data-i18n="routeApiFormatOpenAIChat">openai_chat（OpenAI 对话接口）</option>
+        <option value="openai_responses" data-i18n="routeApiFormatOpenAIResponses">openai_responses（OpenAI Responses）</option>
+        <option value="gemini_native" data-i18n="routeApiFormatGemini">gemini_native（Gemini 原生）</option>
+      </select>
+    </label>
     <div style="display:flex;gap:8px;margin-bottom:8px">
       <input type="text" id="rpModel" placeholder="默认 Model" style="flex:1;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px" />
       <input type="text" id="rpHaiKu" placeholder="Haiku 档" style="flex:1;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px" />
@@ -560,11 +569,13 @@ function renderProviders(data) {
   for (const p of routeProviders) {
     const env = (p.settingsConfig && p.settingsConfig.env) || {};
     const isCurrent = p.id === routeCurrent;
+    // 协议只在有意义时展示：老 binary 无该字段、anthropic 为缺省行为，都不打扰
+    const fmt = (p.apiFormat && p.apiFormat !== "anthropic") ? ` · ${esc(p.apiFormat)}` : "";
     html += `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">
       <span class="server-badge ${isCurrent ? "" : "local"}">${isCurrent ? t("routeCurrent") : t("routeNotCurrent")}</span>
       <div style="flex:1;min-width:0">
         <div style="font-weight:500">${esc(p.name)}</div>
-        <div style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(env.ANTHROPIC_BASE_URL || "")}</div>
+        <div style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(env.ANTHROPIC_BASE_URL || "")}${fmt}</div>
       </div>
       <button class="btn btn-sm" onclick="setCurrentProvider('${esc(p.id)}')"${isCurrent ? " disabled" : ""}>${t("routeUse")}</button>
       <button class="btn btn-sm" onclick="editProvider('${esc(p.id)}')">${t("routeEdit")}</button>
@@ -585,6 +596,7 @@ function openProviderForm(provider) {
   document.getElementById("rpHaiKu").value = env.ANTHROPIC_DEFAULT_HAIKU_MODEL || "";
   document.getElementById("rpSonnet").value = env.ANTHROPIC_DEFAULT_SONNET_MODEL || "";
   document.getElementById("rpOpus").value = env.ANTHROPIC_DEFAULT_OPUS_MODEL || "";
+  document.getElementById("rpApiFormat").value = (provider && provider.apiFormat) || "anthropic";
   document.getElementById("rpSetCurrent").checked = !provider;
   document.getElementById("providerModal").classList.add("show");
 }
@@ -608,6 +620,7 @@ async function saveProvider() {
     haiku: document.getElementById("rpHaiKu").value.trim(),
     sonnet: document.getElementById("rpSonnet").value.trim(),
     opus: document.getElementById("rpOpus").value.trim(),
+    api_format: document.getElementById("rpApiFormat").value,
     set_current: document.getElementById("rpSetCurrent").checked,
   };
   if (!body.name) { toast(t("routeNameRequired"), "error"); return; }

@@ -12,6 +12,7 @@ directory.
 import json
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -284,6 +285,43 @@ class ProxySettingTests(RouteTestCase):
         self.assertIn("--db", cmd)
         self.assertNotIn("--app", cmd)
         self.assertIsNone(out["globalProxyUrl"])
+
+
+class ProviderApiFormatTests(RouteTestCase):
+    def test_save_passes_api_format_flag(self):
+        app.route_provider_save({"name": "X", "api_format": "openai_chat"})
+        args = self.proxy_cli_mock.call_args[0][0]
+        self.assertIn("--api-format", args)
+        self.assertIn("openai_chat", args)
+
+    def test_save_omits_flag_when_empty(self):
+        app.route_provider_save({"name": "X"})
+        args = self.proxy_cli_mock.call_args[0][0]
+        self.assertNotIn("--api-format", args)
+        self.assertNotIn("api_format", args)
+
+    def _authed_client(self):
+        app._token_store["t"] = {"login_time": time.time()}
+        client = app.app.test_client()
+        client.set_cookie("dd_token", "t")
+        return client
+
+    def test_api_rejects_invalid_format(self):
+        res = self._authed_client().post(
+            "/api/route/providers", json={"name": "X", "api_format": "ftp"}
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("未知的上游协议格式", res.get_json()["error"])
+        self.proxy_cli_mock.assert_not_called()
+
+    def test_api_accepts_valid_format(self):
+        res = self._authed_client().post(
+            "/api/route/providers", json={"name": "X", "api_format": "gemini_native"}
+        )
+        self.assertEqual(res.status_code, 200)
+        args = self.proxy_cli_mock.call_args[0][0]
+        self.assertIn("--api-format", args)
+        self.assertIn("gemini_native", args)
 
 
 if __name__ == "__main__":

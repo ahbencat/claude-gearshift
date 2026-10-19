@@ -380,10 +380,10 @@ index 263a0b93..4061d20d 100644
  mod settings;
 diff --git a/src-tauri/src/provider_cli.rs b/src-tauri/src/provider_cli.rs
 new file mode 100644
-index 00000000..279e0abf
+index 00000000..5178420f
 --- /dev/null
 +++ b/src-tauri/src/provider_cli.rs
-@@ -0,0 +1,421 @@
+@@ -0,0 +1,487 @@
 +//! `cc-switch-proxy provider` — 在无桌面端的情况下管理 cc-switch DB 里的供应商。
 +//!
 +//! 复用 cc-switch 自己的 DAO（`Database::save_provider` / `set_current_provider` …），
@@ -405,7 +405,7 @@ index 00000000..279e0abf
 +use crate::app_config::AppType;
 +use crate::database::Database;
 +use crate::mode::current::{provider_for, Purpose};
-+use crate::provider::Provider;
++use crate::provider::{Provider, ProviderMeta};
 +use serde_json::{json, Map, Value};
 +use std::collections::HashMap;
 +use std::path::Path;
@@ -430,6 +430,9 @@ index 00000000..279e0abf
 +  --token <T>       凭据            → ANTHROPIC_AUTH_TOKEN
 +  --model <M>       默认模型        → ANTHROPIC_MODEL
 +  --haiku/--sonnet/--opus <M>       档位模型 → ANTHROPIC_DEFAULT_*_MODEL
++  --api-format <F>                  上游协议声明 → meta.apiFormat
++                                    （anthropic / openai_chat / openai_responses /
++                                    gemini_native；缺省 anthropic，即原样透传）
 +  --id <ID>         供应商标识（update 必填；add 省略则按名称生成）
 +  --set-current     保存后设为当前供应商
 +  传空值（如 --token ''）可清空对应字段。
@@ -490,6 +493,7 @@ index 00000000..279e0abf
 +                "id": p.id,
 +                "name": p.name,
 +                "settingsConfig": p.settings_config,
++                "apiFormat": p.meta.as_ref().and_then(|m| m.api_format.clone()),
 +                "inFailoverQueue": p.in_failover_queue,
 +                "isCurrent": current.as_deref() == Some(p.id.as_str()),
 +            })
@@ -538,8 +542,15 @@ index 00000000..279e0abf
 +    apply_env(&mut env, &flags, "sonnet", "ANTHROPIC_DEFAULT_SONNET_MODEL");
 +    apply_env(&mut env, &flags, "opus", "ANTHROPIC_DEFAULT_OPUS_MODEL");
 +
++    // 协议声明进 meta.apiFormat（引擎 SSOT）；update 不传 --api-format 时保留原值。
++    let meta = resolve_meta(
++        existing.as_ref().and_then(|p| p.meta.as_ref()),
++        &flags,
++    )?;
++
 +    let settings_config = json!({ "env": Value::Object(env) });
-+    let provider = Provider::with_id(id.clone(), name, settings_config, None);
++    let mut provider = Provider::with_id(id.clone(), name, settings_config, None);
++    provider.meta = meta;
 +    db.save_provider(&app, &provider)
 +        .map_err(|e| e.to_string())?;
 +
@@ -711,6 +722,30 @@ index 00000000..279e0abf
 +    }
 +}
 +
++/// `--api-format` → `meta.apiFormat`（引擎判定上游协议的 SSOT）。
++/// 不传时原样保留已有 meta（update 不洗掉协议声明）。
++fn resolve_meta(
++    existing: Option<&ProviderMeta>,
++    flags: &HashMap<String, String>,
++) -> Result<Option<ProviderMeta>, String> {
++    let mut meta = existing.cloned();
++    if let Some(fmt) = flags.get("api-format") {
++        match fmt.as_str() {
++            "anthropic" | "openai_chat" | "openai_responses" | "gemini_native" => {
++                let mut m = meta.unwrap_or_default();
++                m.api_format = Some(fmt.clone());
++                meta = Some(m);
++            }
++            other => {
++                return Err(format!(
++                    "未知的 --api-format: {other}（可选 anthropic/openai_chat/openai_responses/gemini_native）"
++                ))
++            }
++        }
++    }
++    Ok(meta)
++}
++
 +fn unique_id(db: &Database, app: &str, name: &str) -> Result<String, String> {
 +    let base = slugify(name);
 +    let existing = db.get_provider_ids(app).map_err(|e| e.to_string())?;
@@ -790,6 +825,37 @@ index 00000000..279e0abf
 +        assert_eq!(slugify("My Provider"), "my-provider");
 +        assert_eq!(slugify("  火山 Ark  "), "ark");
 +        assert_eq!(slugify("!!!"), "provider");
++    }
++
++    #[test]
++    fn resolve_meta_sets_api_format() {
++        let flags = parse_flags(&args(&["--api-format", "openai_chat"])).unwrap();
++        let meta = resolve_meta(None, &flags).unwrap();
++        assert_eq!(
++            meta.as_ref().and_then(|m| m.api_format.as_deref()),
++            Some("openai_chat")
++        );
++    }
++
++    #[test]
++    fn resolve_meta_rejects_unknown_format() {
++        let flags = parse_flags(&args(&["--api-format", "ftp"])).unwrap();
++        assert!(resolve_meta(None, &flags).is_err());
++    }
++
++    #[test]
++    fn resolve_meta_keeps_existing_without_flag() {
++        let mut old = ProviderMeta::default();
++        old.api_format = Some("gemini_native".to_string());
++        let flags = parse_flags(&args(&["--name", "x"])).unwrap();
++        let meta = resolve_meta(Some(&old), &flags).unwrap();
++        assert_eq!(
++            meta.as_ref().and_then(|m| m.api_format.as_deref()),
++            Some("gemini_native")
++        );
++        // 既无旧值又不传 flag：保持 None，不凭空造出空 meta。
++        let flags = parse_flags(&args(&["--name", "x"])).unwrap();
++        assert!(resolve_meta(None, &flags).unwrap().is_none());
 +    }
 +
 +    #[test]
