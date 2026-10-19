@@ -100,11 +100,9 @@ Web UI **全程密码保护** —— 每个页面、每个 API 接口都必须�
 （见 [`patches/`](patches/README.md)）；dd-switch 只负责启停它并把 Claude Code
 指过去。供应商来自 cc-switch 的 SQLite 库。
 
-> **现状（2026-10-19）：两种场景都已打通。** 每个供应商在本地路由页的「上游协议」
-> 下拉里声明上游协议（`anthropic` = 透传，缺省；`openai_chat` /
-> `openai_responses` / `gemini_native` 触发转换），存为 cc-switch 库里的
-> `meta.apiFormat`——代理读它决定是否转协议。`config/*.json` 里写顶层
-> `"api_format"`，在 `provider import` 时同样被识别。
+> **现状：⏳ 待端到端验证。** 两条链路都已实现（供应商「上游协议」下拉 →
+> `meta.apiFormat` → 代理转换），但经转换上游的真实流量尚未验证。
+> `config/*.json` 里写顶层 `"api_format"`，在 `provider import` 时同样被识别。
 
 **什么时候才需要它** —— 本地路由只在两种场景下有价值：
 

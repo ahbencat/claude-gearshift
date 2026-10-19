@@ -106,12 +106,11 @@ from a patched cc-switch (see [`patches/`](patches/README.md)); dd-switch only
 starts/stops it and points Claude Code at it. Providers come from cc-switch's
 SQLite database.
 
-> **Status (2026-10-19): both use cases work.** Each provider declares its
-> upstream protocol via the "Upstream protocol" dropdown in the local-routing
-> page (`anthropic` = passthrough, the default; `openai_chat` /
-> `openai_responses` / `gemini_native` trigger conversion). It is stored as
-> `meta.apiFormat` in cc-switch's DB — the key the proxy reads. A top-level
-> `"api_format"` in `config/*.json` is likewise honored on `provider import`.
+> **Status: ⏳ pending end-to-end verification.** Both paths are implemented
+> (per-provider "Upstream protocol" dropdown → `meta.apiFormat` → proxy
+> conversion), but live traffic through a converted upstream has not been
+> verified yet. A top-level `"api_format"` in `config/*.json` is likewise
+> honored on `provider import`.
 
 **When do you actually need it** — local routing only earns its keep in two
 situations:
