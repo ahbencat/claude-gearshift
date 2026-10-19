@@ -8,7 +8,7 @@
 
 | 方式 | 路径 | 说明 |
 |---|---|---|
-| 终端脚本 | `switch_claude_config.sh` | 交互式菜单，`bash` + `jq` |
+| 终端脚本 | `switch_claude_config.sh` | 交互式菜单，`bash` + `jq`（旧版，将退役） |
 | Web UI | `dd-switch/` | Flask + waitress，浏览器操作，密码保护 |
 
 ## 这个面板解决什么问题
@@ -38,6 +38,9 @@
 # 指定配置目录
 ./switch_claude_config.sh ~/.claude/configs/
 ```
+
+> **路线图：终端脚本将退役。** 新能力（本地路由、上游协议选择、出站代理）只有
+> Web UI 有——以后请用 Web UI。
 
 ## Web UI 用法
 
@@ -121,13 +124,15 @@ Web UI **全程密码保护** —— 每个页面、每个 API 接口都必须�
 
 1. **配置供应商** —— 本地路由面板列出 `~/.cc-switch/cc-switch.db` 里的供应商。
    可在面板中增删改，或一键把现有 `config/*.json` 导入。选一个作为当前供应商。
+   以后换供应商只要一步——把另一个设为当前，代理下个请求即生效，无需重启。
 2. **开启路由** —— dd-switch 拉起 `cc-switch-proxy --db … --port 9301`
    （仅回环；普通子进程，不是服务），等待 `/health` 就绪，并快照
    `~/.claude/settings.json` 里受管的 `env` 键。
-3. **应用** —— 写入 `ANTHROPIC_BASE_URL=http://127.0.0.1:9301`、占位凭据
-   `PROXY_MANAGED`，以及稳定的档位别名（`claude-sonnet-5` …）。代理再按当前
-   供应商的 `env` 把这些别名映射成真实模型（映射随供应商走）。`env` 里的其他键
-   和所有非 `env` 字段一概不动。
+3. **应用** —— 只作用于当前已生效的配置（其他配置一概不动）：写入
+   `ANTHROPIC_BASE_URL=http://127.0.0.1:9301`、占位凭据 `PROXY_MANAGED`，
+   以及稳定的档位别名（`claude-sonnet-5` …）。代理再按当前供应商的 `env`
+   把这些别名映射成真实模型（映射随供应商走）。`env` 里的其他键和所有非
+   `env` 字段一概不动。
 4. **关闭路由** —— 从快照恢复受管的键，然后结束进程组。恢复失败会保留状态以便重试。
 
 **配置** —— 全部设置都在 dd-switch 的 `EnvironmentFile`

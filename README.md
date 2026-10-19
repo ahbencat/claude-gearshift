@@ -8,7 +8,7 @@ Two ways to use it, sharing the same `config/` directory and the same switch sem
 
 | Mode | Path | Description |
 |---|---|---|
-| CLI script | `switch_claude_config.sh` | Interactive menu, `bash` + `jq` |
+| CLI script | `switch_claude_config.sh` | Interactive menu, `bash` + `jq` (legacy — to be retired) |
 | Web UI | `dd-switch/` | Flask + waitress, browser-based, password-protected |
 
 ## Why this panel
@@ -42,6 +42,10 @@ No more per-server manual editing, no more drift between machines.
 # Or point it at another config directory
 ./switch_claude_config.sh ~/.claude/configs/
 ```
+
+> **Roadmap: the CLI script will be retired.** New capabilities (local routing,
+> upstream-protocol selection, outbound proxy) are Web UI only — use the Web UI
+> going forward.
 
 ## Web UI Usage
 
@@ -131,11 +135,14 @@ routing.
 
 1. **Add providers** — the local-routing panel lists providers from
    `~/.cc-switch/cc-switch.db`. Add/edit them there, or import the existing
-   `config/*.json` in one click. Pick one as current.
+   `config/*.json` in one click. Pick one as current. Switching providers
+   later is one step — set another as current and the router picks it up on
+   the next request, no restart.
 2. **Start routing** — dd-switch spawns `cc-switch-proxy --db … --port 9301`
    (loopback-only; a plain child process, not a service), waits for `/health`,
    and snapshots the managed `env` keys from `~/.claude/settings.json`.
-3. **Apply** — writes `ANTHROPIC_BASE_URL=http://127.0.0.1:9301`, the
+3. **Apply** — applies to the currently active config only (no other profile
+   is touched): writes `ANTHROPIC_BASE_URL=http://127.0.0.1:9301`, the
    `PROXY_MANAGED` placeholder token, and the stable tier aliases
    (`claude-sonnet-5` …). The proxy maps those aliases to the current provider's
    real models (per-provider, from the provider's `env`). Everything else in
