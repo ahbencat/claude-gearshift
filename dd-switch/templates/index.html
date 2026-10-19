@@ -220,6 +220,12 @@
         <h3 data-i18n="currentConfig">当前使用中的配置</h3>
         <div id="currentInfo" data-i18n="loading">加载中...</div>
         <div id="currentOtherFields"></div>
+        <div id="routeEntry" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-sm btn-primary" id="btnRouteEntry" onclick="routeToggleFromCurrent()">应用本地路由</button>
+            <span id="routeEntryHint" style="font-size:12px;color:var(--muted)"></span>
+          </div>
+        </div>
       </div>
 
       <div class="preview-area">
@@ -438,6 +444,7 @@ function syncRouteTab(isLocal) {
   routeTabAvailable = isLocal;
   document.getElementById("tabRoute").disabled = !isLocal;
   if (!isLocal) setActiveTab("config");
+  renderRouteEntry();
 }
 
 // --- Load ---
@@ -449,6 +456,7 @@ async function loadAll() {
     await Promise.all([loadConfigs(), loadCurrent(), loadRoute()]);
   } else {
     routeActive = false;
+    routeApplied = false;
     document.getElementById("routeCard").style.display = "none";
     syncRouteTab(false);
     await Promise.all([loadRemoteConfigs(currentServer), loadRemoteCurrent(currentServer)]);
@@ -477,6 +485,8 @@ async function loadRoute() {
     renderProviders(providers);
   } catch (e) {
     document.getElementById("routeCard").style.display = "none";
+    routeActive = false;
+    routeApplied = false;
     syncRouteTab(false);
   }
   // 出站代理单独加载：CLI 版本太老不支持 `proxy` 子命令时只禁用这一块，不拖累整个面板
@@ -540,8 +550,14 @@ function renderRoute(data) {
     btnStart.style.display = "none";
     btnStop.style.display = "none";
     btnApply.style.display = "none";
+    routeActive = false;
+    routeApplied = false;
+    renderRouteEntry();
     return;
   }
+  routeActive = !!data.active;
+  routeApplied = !!data.applied;
+  renderRouteEntry();
   if (!data.active) {
     line.textContent = t("routeInactive");
     btnStart.style.display = "inline-block";
@@ -702,6 +718,59 @@ async function routeStop() {
     toast(`❌ ${translateError(e.message)}`, "error");
   }
   btn.disabled = false;
+}
+
+// 当前配置页的路由入口：未开启时一键 start+apply 到当前配置；已应用时变关闭按钮。
+function renderRouteEntry() {
+  const entry = document.getElementById("routeEntry");
+  const btn = document.getElementById("btnRouteEntry");
+  const hint = document.getElementById("routeEntryHint");
+  if (!routeTabAvailable) {
+    entry.style.display = "none";
+    return;
+  }
+  entry.style.display = "block";
+  if (routeApplied) {
+    const p = routeProviders.find(x => x.id === routeCurrent);
+    btn.textContent = t("routeStop");
+    btn.className = "btn btn-sm btn-danger";
+    hint.textContent = `${t("routeApplied")}${p ? ` · ${p.name}` : ""}`;
+  } else {
+    btn.textContent = t("routeApplyToCurrent");
+    btn.className = "btn btn-sm btn-primary";
+    hint.textContent = routeActive ? t("routeNotApplied") : "";
+  }
+}
+
+async function routeToggleFromCurrent() {
+  const btn = document.getElementById("btnRouteEntry");
+  btn.disabled = true;
+  try {
+    if (routeApplied) {
+      if (!confirm(t("routeConfirmStop"))) return;
+      await api("POST", "api/route/stop");
+      toast(t("routeStopped"), "success");
+    } else {
+      if (!routeCurrent) {
+        // 还没有可用供应商：带用户去路由页添加
+        toast(t("routeNoProviders"), "error");
+        setActiveTab("route");
+        return;
+      }
+      if (!routeActive) {
+        await api("POST", "api/route/start");
+      }
+      await api("POST", "api/route/apply");
+      toast(t("routeAppliedMsg"), "success");
+    }
+    await loadRoute();
+    await loadCurrent();
+  } catch (e) {
+    toast(`❌ ${translateError(e.message)}`, "error");
+    await loadRoute();
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 async function loadConfigs() {
