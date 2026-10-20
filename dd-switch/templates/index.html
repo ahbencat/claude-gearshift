@@ -202,6 +202,11 @@
       </select>
       <button class="btn btn-sm" onclick="openServerModal()" style="width:100%;margin-top:6px" data-i18n="manageServers">管理服务器</button>
     </div>
+    <div style="padding:8px;border-bottom:1px solid var(--border)">
+      <div class="config-item" id="currentConfigEntry" onclick="showCurrentConfig()" style="margin-bottom:0">
+        <span class="name">📍 <span data-i18n="sidebarCurrentConfig">当前配置</span></span>
+      </div>
+    </div>
     <div class="config-list" id="configList">
       <div class="empty" data-i18n="loading">加载中...</div>
     </div>
@@ -216,7 +221,7 @@
 
     <!-- page 1: 当前配置 -->
     <div id="tabPageConfig" style="display:flex;flex-direction:column;gap:16px;flex:1;min-height:0">
-      <div class="current-card" id="currentCard">
+      <div class="current-card" id="currentCard" style="display:none">
         <h3 data-i18n="currentConfig">当前使用中的配置</h3>
         <div id="currentInfo" data-i18n="loading">加载中...</div>
         <div id="currentOtherFields"></div>
@@ -445,6 +450,23 @@ function syncRouteTab(isLocal) {
   document.getElementById("tabRoute").disabled = !isLocal;
   if (!isLocal) setActiveTab("config");
   renderRouteEntry();
+}
+
+// 左侧“当前配置”入口：默认不展示，点击后才在主区显示当前配置卡片；
+// 点选任一配置文件则回到文件预览，卡片收起。
+let currentVisible = false;
+
+function renderCurrentCard() {
+  document.getElementById("currentCard").style.display = currentVisible ? "block" : "none";
+  document.getElementById("currentConfigEntry").classList.toggle("active", currentVisible);
+}
+
+async function showCurrentConfig() {
+  currentVisible = true;
+  renderCurrentCard();
+  if (activeTab !== "config") setActiveTab("config");
+  if (currentServer === "local") await loadCurrent();
+  else await loadRemoteCurrent(currentServer);
 }
 
 // --- Load ---
@@ -877,6 +899,8 @@ function renderSidebar() {
 async function selectConfig(name) {
   currentName = name;
   editing = false; isDirty = false;
+  currentVisible = false;
+  renderCurrentCard();
   try {
     const data = await api("GET", `api/configs/${name}`);
     document.getElementById("fileName").textContent = name;
