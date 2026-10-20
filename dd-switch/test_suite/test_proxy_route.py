@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tests for the cc-switch-proxy local-routing feature in dd-switch.
 
-Run:  python3 -m unittest discover -s tests -v   (from dd-switch/)
+Run:  python3 -m unittest discover -s test_suite -v   (from dd-switch/)
 
 Process spawning, termination, the readiness probe and the provider CLI are all
 mocked — no cc-switch-proxy is launched and no network is touched. Real
