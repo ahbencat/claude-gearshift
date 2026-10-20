@@ -221,7 +221,7 @@
 
     <!-- page 1: 当前配置 -->
     <div id="tabPageConfig" style="display:flex;flex-direction:column;gap:16px;flex:1;min-height:0">
-      <div class="current-card" id="currentCard" style="display:none">
+      <div class="current-card" id="currentCard">
         <h3 data-i18n="currentConfig">当前使用中的配置</h3>
         <div id="currentInfo" data-i18n="loading">加载中...</div>
         <div id="currentOtherFields"></div>
@@ -233,7 +233,7 @@
         </div>
       </div>
 
-      <div class="preview-area">
+      <div class="preview-area" id="fileView" style="display:none">
         <div class="toolbar">
           <span class="file-name" id="fileName">选择一个配置</span>
           <div style="display:flex;gap:6px">
@@ -394,7 +394,8 @@
 <script src="static/i18n.js"></script>
 <script>
 let configs = [];
-let currentName = null;
+let currentName = null; // 左侧选中态：正在查看/编辑的文件（单选）
+let liveProfileName = null; // 线上生效的配置档：只决定 ⬅️ 标记，不参与选中
 let editing = false;
 let isDirty = false;
 
@@ -403,6 +404,7 @@ function onLangChange() {
   // fileName holds a real file name once selected — only reset when empty
   if (!currentName) document.getElementById("fileName").textContent = t("selectConfig");
   loadAll();
+  renderConfigView(); // 语言切换会重写页签文字，这里按当前视图恢复
 }
 
 // --- Toast ---
@@ -452,18 +454,23 @@ function syncRouteTab(isLocal) {
   renderRouteEntry();
 }
 
-// 左侧“当前配置”入口：默认不展示，点击后才在主区显示当前配置卡片；
-// 点选任一配置文件则回到文件预览，卡片收起。
-let currentVisible = false;
+// “当前配置”页是单视图：默认显示线上当前配置；点左侧文件则只显示该文件
+//（页签名字同步换成文件名），两者不叠加。
+let viewedFile = null; // null = 当前配置视图，否则为正在查看的文件名
 
-function renderCurrentCard() {
-  document.getElementById("currentCard").style.display = currentVisible ? "block" : "none";
-  document.getElementById("currentConfigEntry").classList.toggle("active", currentVisible);
+function renderConfigView() {
+  const isFile = viewedFile !== null;
+  document.getElementById("currentCard").style.display = isFile ? "none" : "block";
+  document.getElementById("fileView").style.display = isFile ? "flex" : "none";
+  document.getElementById("tabConfig").textContent = isFile ? viewedFile : t("tabCurrentConfig");
+  document.getElementById("currentConfigEntry").classList.toggle("active", !isFile);
 }
 
 async function showCurrentConfig() {
-  currentVisible = true;
-  renderCurrentCard();
+  viewedFile = null;
+  currentName = null; // 左侧单选：回到当前配置时清除文件选中态
+  renderSidebar();
+  renderConfigView();
   if (activeTab !== "config") setActiveTab("config");
   if (currentServer === "local") await loadCurrent();
   else await loadRemoteCurrent(currentServer);
@@ -868,8 +875,9 @@ async function loadCurrent() {
     otherHtml += `<div style="margin-top:8px;font-size:12px;color:var(--muted)">📁 ${data.path}</div>`;
     otherEl.innerHTML = otherHtml;
 
-    // 服务端已经算好当前 profile（路由开启时不会匹配到任何配置档）
-    currentName = data.active_profile || null;
+    // 服务端已经算好当前 profile（路由开启时不会匹配到任何配置档）；
+    // 它只决定 ⬅️ 标记，不影响左侧选中态
+    liveProfileName = data.active_profile || null;
     renderSidebar();
   } catch (e) {
     document.getElementById("currentInfo").textContent = `${t("readFailed")}: ${translateError(e.message)}`;
@@ -882,7 +890,7 @@ function renderSidebar() {
   for (const c of configs) {
     const active = c.name === currentName ? ' active' : '';
     html += `<div class="config-item${active}" data-name="${c.name}" onclick="selectConfig('${c.name}')">
-      <span class="name">${c.name}${c.name === currentName ? ' ⬅️' : ''}</span>
+      <span class="name">${c.name}${c.name === liveProfileName ? ' ⬅️' : ''}</span>
       <span class="actions">
         <button onclick="event.stopPropagation();selectConfig('${c.name}')" data-i18n-title="edit" title="编辑">✏️</button>
         <button class="btn-del" onclick="event.stopPropagation();deleteConfig('${c.name}')" data-i18n-title="delete" title="删除">🗑️</button>
@@ -899,8 +907,8 @@ function renderSidebar() {
 async function selectConfig(name) {
   currentName = name;
   editing = false; isDirty = false;
-  currentVisible = false;
-  renderCurrentCard();
+  viewedFile = name;
+  renderConfigView();
   try {
     const data = await api("GET", `api/configs/${name}`);
     document.getElementById("fileName").textContent = name;
@@ -943,6 +951,8 @@ async function doSwitch() {
       toast(t("switchedTo", switchingName), "success");
       closeModal();
       await loadCurrent();
+      viewedFile = null; // 切完直接看生效后的当前配置
+      renderConfigView();
     } else {
       const content = JSON.parse(document.getElementById("editor").value);
       await doRemoteSwitch(currentServer, content);
@@ -1006,6 +1016,8 @@ async function deleteConfig(name) {
       document.getElementById("btnSwitch").style.display = "none";
       document.getElementById("btnSave").style.display = "none";
     }
+    if (viewedFile === name) viewedFile = null; // 正在看的文件被删了，回到当前配置视图
+    renderConfigView();
     await loadConfigs();
   } catch (e) {
     toast(translateError(e.message), "error");
@@ -1070,6 +1082,10 @@ async function loadServers() {
 
 function onServerChange() {
   currentServer = document.getElementById("serverSelect").value;
+  currentName = null; // 换服务器时清空上一台的选中/标记状态
+  liveProfileName = null;
+  viewedFile = null;
+  renderConfigView();
   loadAll();
 }
 
@@ -1209,6 +1225,8 @@ async function doRemoteSwitch(serverName, configContent) {
     await api("POST", `api/servers/${serverName}/switch`, { content: configContent });
     toast("切换成功", "success");
     await loadRemoteCurrent(serverName);
+    viewedFile = null;
+    renderConfigView();
   } catch (e) {
     toast(translateError(e.message), "error");
   }
@@ -1218,6 +1236,7 @@ async function doRemoteSwitch(serverName, configContent) {
 document.getElementById("fileName").textContent = t("selectConfig");
 loadServers();
 loadAll();
+renderConfigView(); // 默认即当前配置视图：卡片显示、左侧入口高亮
 </script>
 </body>
 </html>
