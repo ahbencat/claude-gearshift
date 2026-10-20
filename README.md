@@ -91,7 +91,8 @@ from a patched cc-switch (see [`patches/`](patches/README.md)); dd-switch only
 starts/stops it and points Claude Code at it. Providers come from cc-switch's
 SQLite database.
 
-> **Status: ✅ verified end-to-end.** `dd-switch/test_suite/test_local_routing_e2e.py`
+> **Status: ✅ working end-to-end overall; logic refinements pending.**
+> `dd-switch/test_suite/test_local_routing_e2e.py`
 > drives the **real** `cc-switch-proxy` binary against a **live** upstream
 > (`../../test_data/.testdata`): OpenAI-Chat protocol relay (non-streaming +
 > SSE streaming), tier-alias model mapping, provider CRUD and the
