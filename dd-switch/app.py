@@ -135,6 +135,27 @@ def write_json_atomic(path, data):
     os.replace(tmp.name, path)
 
 
+def _safe_config_path(name):
+    """Resolve a config name inside CONFIG_DIR; None when it escapes or is blank.
+
+    Rejects separators outright and refuses anything that does not resolve
+    inside the config dir (``..`` escapes, absolute paths, symlinks pointing
+    out). Callers map None to a clean 400 instead of touching the filesystem.
+    """
+    if not name or "/" in name or "\\" in name or "\x00" in name:
+        return None
+    try:
+        base = CONFIG_DIR.resolve()
+        path = (CONFIG_DIR / name).resolve()
+    except Exception:
+        return None
+    try:
+        path.relative_to(base)
+    except ValueError:
+        return None
+    return path
+
+
 def scan_configs():
     """Scan config directory, validate, return (valid, invalid) lists."""
     valid = []
@@ -189,6 +210,10 @@ def do_switch(config_path):
     merged = {k: v for k, v in current.items() if k != "env"}
     if selected_env:
         merged["env"] = selected_env
+    elif "env" in current:
+        # Selected config carries no env: keep the live one instead of
+        # dropping the key (which would strip the session's credentials).
+        merged["env"] = current["env"]
 
     write_json_atomic(CLAUDE_CONFIG, merged)
     return True
@@ -208,8 +233,23 @@ def do_switch(config_path):
 #   DD_SWITCH_ROUTE_APP          应用类型（默认 claude）
 #   DD_SWITCH_ROUTE_PORT         监听端口（默认 9301）
 
-ROUTE_BASE_URL = "http://127.0.0.1:9301"
 ROUTE_PORT = int(os.environ.get("DD_SWITCH_ROUTE_PORT", "9301") or "9301")
+
+
+def route_base_url():
+    """Gateway URL for the local proxy; always follows the configured port."""
+    return f"http://127.0.0.1:{ROUTE_PORT}"
+
+
+def __getattr__(name):
+    # Module-level dynamic attribute (PEP 562): the gateway URL always follows
+    # the configured port, so DD_SWITCH_ROUTE_PORT actually takes effect — both
+    # for the readiness probe and for the URL written into settings.json.
+    # (Module __getattr__ only fires for attribute access from outside, so
+    # internal code calls route_base_url() directly.)
+    if name == "ROUTE_BASE_URL":
+        return route_base_url()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 ROUTE_STATE_DIR = Path.home() / ".config" / "dd-switch"
 ROUTE_STATE_FILE = ROUTE_STATE_DIR / "route-state.json"
 ROUTE_LOG_FILE = ROUTE_STATE_DIR / "route.log"
@@ -302,6 +342,11 @@ def _route_process_alive(pid):
     return _pid_is_ours(pid)
 
 
+# pid -> Popen handle for proxies we spawned. Kept so the child is wait()ed
+# (reaped) instead of lingering as a zombie; entries are dropped on stop.
+_route_procs = {}
+
+
 def _start_route_process():
     """Spawn cc-switch-proxy detached. Returns its PID."""
     ROUTE_STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -317,12 +362,31 @@ def _start_route_process():
         )
     finally:
         log.close()
+    _route_procs[proc.pid] = proc
+    try:
+        proc.wait(timeout=0)
+    except subprocess.TimeoutExpired:
+        pass  # still running — the expected case
+    except Exception:
+        pass  # already reaped or unreachable; stop() cleans up by pid anyway
     return proc.pid
+
+
+def _reap_route_process(pid):
+    """wait() a tracked child so it does not stay a zombie. Never raises."""
+    proc = _route_procs.pop(pid, None)
+    if proc is None:
+        return
+    try:
+        proc.wait(timeout=5)
+    except Exception:
+        pass
 
 
 def _stop_route_process(pid):
     """Terminate the process group we started. True when it is gone."""
     if not _pid_is_ours(pid):
+        _reap_route_process(pid)
         return True
     try:
         os.killpg(pid, signal.SIGTERM)
@@ -330,10 +394,12 @@ def _stop_route_process(pid):
         try:
             os.kill(pid, signal.SIGTERM)
         except OSError:
+            _reap_route_process(pid)
             return True
     deadline = time.time() + ROUTE_STOP_TIMEOUT
     while time.time() < deadline:
         if not _pid_is_ours(pid):
+            _reap_route_process(pid)
             return True
         time.sleep(0.2)
     for killer in (os.killpg, os.kill):
@@ -341,12 +407,13 @@ def _stop_route_process(pid):
             killer(pid, signal.SIGKILL)
         except OSError:
             pass
+    _reap_route_process(pid)
     return not _pid_is_ours(pid)
 
 
 def _route_ready():
     """True when the proxy answers /health."""
-    req = urllib.request.Request(ROUTE_BASE_URL + "/health")
+    req = urllib.request.Request(route_base_url() + "/health")
     with urllib.request.urlopen(req, timeout=5) as resp:
         return resp.status == 200
 
@@ -479,7 +546,7 @@ def _snapshot_managed_env(settings_env):
 
 def _apply_route_env(settings):
     env = dict(settings.get("env") or {})
-    env["ANTHROPIC_BASE_URL"] = ROUTE_BASE_URL
+    env["ANTHROPIC_BASE_URL"] = route_base_url()
     env["ANTHROPIC_AUTH_TOKEN"] = ROUTE_TOKEN_PLACEHOLDER
     env["ANTHROPIC_MODEL"] = ROUTE_ALIASES["sonnet"]
     env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = ROUTE_ALIASES["haiku"]
@@ -701,7 +768,9 @@ def api_configs():
 @app.route("/api/configs/<name>")
 @login_required
 def api_config_get(name):
-    path = CONFIG_DIR / name
+    path = _safe_config_path(name)
+    if path is None:
+        return jsonify({"error": "文件名不合法"}), 400
     if not path.exists() or not path.is_file():
         return jsonify({"error": f"配置文件 {name} 不存在"}), 404
     try:
@@ -722,8 +791,9 @@ def api_config_create():
         return jsonify({"error": "name 和 content 不能为空"}), 400
     if not name.endswith(".json"):
         name += ".json"
-    # basic sanitize: no path traversal
-    if "/" in name or "\\" in name:
+    # confine to the config dir: no separators, no ".." escapes
+    path = _safe_config_path(name)
+    if path is None:
         return jsonify({"error": "文件名不合法"}), 400
 
     try:
@@ -731,7 +801,6 @@ def api_config_create():
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
 
-    path = CONFIG_DIR / name
     if path.exists():
         return jsonify({"error": f"文件 {name} 已存在"}), 409
 
@@ -742,8 +811,10 @@ def api_config_create():
 @app.route("/api/configs/<name>", methods=["PUT"])
 @login_required
 def api_config_update(name):
-    path = CONFIG_DIR / name
-    if not path.exists():
+    path = _safe_config_path(name)
+    if path is None:
+        return jsonify({"error": "文件名不合法"}), 400
+    if not path.exists() or not path.is_file():
         return jsonify({"error": f"配置文件 {name} 不存在"}), 404
 
     body = request.get_json(force=True)
@@ -763,8 +834,10 @@ def api_config_update(name):
 @app.route("/api/configs/<name>", methods=["DELETE"])
 @login_required
 def api_config_delete(name):
-    path = CONFIG_DIR / name
-    if not path.exists():
+    path = _safe_config_path(name)
+    if path is None:
+        return jsonify({"error": "文件名不合法"}), 400
+    if not path.exists() or not path.is_file():
         return jsonify({"error": f"配置文件 {name} 不存在"}), 404
     os.remove(path)
     return jsonify({"name": name, "message": "已删除"})
@@ -797,8 +870,10 @@ def api_switch():
     if not name:
         return jsonify({"error": "name 不能为空"}), 400
 
-    path = CONFIG_DIR / name
-    if not path.exists():
+    path = _safe_config_path(name)
+    if path is None:
+        return jsonify({"error": "文件名不合法"}), 400
+    if not path.exists() or not path.is_file():
         return jsonify({"error": f"配置文件 {name} 不存在"}), 404
 
     with _route_lock:
@@ -1008,10 +1083,15 @@ def api_servers_add():
     if "/" in name or "\\" in name:
         return jsonify({"error": "名称不合法"}), 400
 
+    try:
+        port_num = int(port) if port else 22
+    except (TypeError, ValueError):
+        return jsonify({"error": "port 必须是数字"}), 400
+
     server = {
         "name": name,
         "host": host,
-        "port": int(port) if port else 22,
+        "port": port_num,
         "username": username,
         "key_path": key_path,
         "passphrase": passphrase,
@@ -1056,6 +1136,8 @@ def api_servers_delete(name):
     """Delete a server."""
     try:
         ssh_manager.delete_server(name)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
     except Exception as e:
         return jsonify({"error": f"删除失败: {e}"}), 500
     return jsonify({"name": name, "message": "已删除"})
@@ -1107,7 +1189,7 @@ def api_servers_current(name):
         content = result["content"]
         env = content.get("env", {})
         other_fields = {k: v for k, v in content.items() if k != "env"}
-        return jsonify({"exists": True, "env": env, "other_fields": other_fields, "path": ssh_manager.REMOTE_CONFIG_PATH})
+        return jsonify({"exists": True, "env": _mask_secret_env(env), "other_fields": other_fields, "path": ssh_manager.REMOTE_CONFIG_PATH})
     except Exception as e:
         return jsonify({"error": f"读取失败: {e}"}), 500
 

@@ -101,10 +101,12 @@ def update_server(name: str, updates: dict, password: str) -> dict:
 
 
 def delete_server(name: str):
-    """Delete a server."""
+    """Delete a server. Raises ValueError when the name does not exist."""
     servers = load_servers()
-    servers = [s for s in servers if s["name"] != name]
-    save_servers(servers)
+    kept = [s for s in servers if s["name"] != name]
+    if len(kept) == len(servers):
+        raise ValueError(f"服务器 {name} 不存在")
+    save_servers(kept)
 
 
 def get_ssh_client(server: dict, password: str) -> paramiko.SSHClient:
