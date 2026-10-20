@@ -85,8 +85,12 @@ Web UI **全程密码保护** —— 每个页面、每个 API 接口都必须�
 （见 [`patches/`](patches/README.md)）；dd-switch 只负责启停它并把 Claude Code
 指过去。供应商来自 cc-switch 的 SQLite 库。
 
-> **现状：⏳ 待端到端验证。** 两条链路都已实现（供应商「上游协议」下拉 →
-> `meta.apiFormat` → 代理转换），但经转换上游的真实流量尚未验证。
+> **现状：✅ 已通过端到端验证。** `dd-switch/test_suite/test_local_routing_e2e.py`
+> 用**真实** `cc-switch-proxy` 二进制对着**真实**上游（`../../test_data/.testdata`）
+> 验证：OpenAI-Chat 协议转换（非流式 + SSE 流式）、档位别名模型映射、供应商 CRUD
+> 以及 启动 → 应用 → 跑流量 → 停止生命周期 全部通过。前置条件缺失（无二进制、
+> 无 WebKitGTK 运行库、无接入点）时自动跳过。详见
+> [`TEST-REPORT.md`](TEST-REPORT.md)。
 > `config/*.json` 里写顶层 `"api_format"`，在 `provider import` 时同样被识别。
 
 **什么时候才需要它** —— 本地路由只在两种场景下有价值：
@@ -158,7 +162,9 @@ systemctl --user restart dd-switch
   路由控制。
 - 该进程不会在重启后存活。重启后点“开启路由”会重新拉起并复用已有快照。
 - 路由开启期间禁止切换配置档（会破坏恢复快照）——请先关闭路由。
-- 测试：在 `dd-switch/` 下执行 `python3 -m unittest discover -s tests`。
+- 测试：在 `dd-switch/` 下执行 `python3 -m unittest discover -s test_suite`。
+  单元测试全程 mock；`test_local_routing_e2e.py` 使用真实代理二进制 + 真实上游，
+  二者任一不可用时自动跳过（不会变红）。
 
 ## 配置目录结构
 

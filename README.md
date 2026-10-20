@@ -91,11 +91,14 @@ from a patched cc-switch (see [`patches/`](patches/README.md)); dd-switch only
 starts/stops it and points Claude Code at it. Providers come from cc-switch's
 SQLite database.
 
-> **Status: ⏳ pending end-to-end verification.** Both paths are implemented
-> (per-provider "Upstream protocol" dropdown → `meta.apiFormat` → proxy
-> conversion), but live traffic through a converted upstream has not been
-> verified yet. A top-level `"api_format"` in `config/*.json` is likewise
-> honored on `provider import`.
+> **Status: ✅ verified end-to-end.** `dd-switch/test_suite/test_local_routing_e2e.py`
+> drives the **real** `cc-switch-proxy` binary against a **live** upstream
+> (`../../test_data/.testdata`): OpenAI-Chat protocol relay (non-streaming +
+> SSE streaming), tier-alias model mapping, provider CRUD and the
+> start → apply → traffic → stop lifecycle all pass. Prerequisites missing
+> (no binary, no WebKitGTK runtime libs, no endpoint) ⇒ the suite skips.
+> Details in [`TEST-REPORT.md`](TEST-REPORT.md). A top-level `"api_format"` in
+> `config/*.json` is likewise honored on `provider import`.
 
 **When do you actually need it** — local routing only earns its keep in two
 situations:
@@ -179,7 +182,10 @@ systemctl --user restart dd-switch
   re-spawns it and reuses the existing snapshot.
 - While routing is active, profile switching is locked (it would corrupt the
   restore snapshot) — stop routing first.
-- Run the tests with `python3 -m unittest discover -s tests` from `dd-switch/`.
+- Run the tests with `python3 -m unittest discover -s test_suite` from
+  `dd-switch/`. Unit suites are fully mocked; `test_local_routing_e2e.py`
+  drives the real proxy binary and a live upstream and skips cleanly when
+  either is unavailable.
 
 ## Config Directory Structure
 
