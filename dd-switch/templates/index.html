@@ -288,7 +288,7 @@
           <strong style="font-size:13px" data-i18n="routeProxyTitle">出站代理</strong>
           <span style="font-size:12px;color:var(--muted)" data-i18n="routeProxyOptional">可选——出站需经网络代理时才填</span>
         </div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;max-width:760px">
           <input type="text" id="routeProxyUrl" data-i18n-placeholder="routeProxyPlaceholder" placeholder="http://代理机:7890（留空 = 直连）" style="flex:1;min-width:220px;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px" />
           <button class="btn btn-sm btn-primary" id="btnRouteProxySave" onclick="routeProxySave()" data-i18n="routeProxySave">保存</button>
           <button class="btn btn-sm" id="btnRouteProxyClear" onclick="routeProxyClear()" data-i18n="routeProxyClear">清除</button>
@@ -309,7 +309,7 @@
             <button class="btn btn-sm btn-danger" id="peDelete" onclick="deleteSelectedProvider()" data-i18n="routeDelete" style="display:none">🗑 删除</button>
           </div>
         </div>
-        <div style="padding:14px;font-size:13px;display:flex;flex-direction:column;gap:12px;overflow-y:auto">
+        <div style="padding:14px;font-size:13px;display:flex;flex-direction:column;gap:12px;overflow-y:auto;width:100%;max-width:980px">
           <div class="pe-grid pe-grid-2">
             <div class="pe-field">
               <div class="pe-label" data-i18n="routeName">名称</div>
@@ -423,7 +423,7 @@
     <h3 data-i18n="manageServers">管理服务器</h3>
     <div id="serverList" style="margin-bottom:12px;overflow-y:auto"></div>
     <div style="border-top:1px solid var(--border);padding-top:12px">
-      <div class="pe-grid pe-grid-2">
+      <div class="pe-grid pe-grid-2" style="max-width:900px">
         <input type="text" id="srvName" class="pe-input" placeholder="名称" />
         <input type="text" id="srvHost" class="pe-input" placeholder="主机地址" />
         <input type="number" id="srvPort" class="pe-input" value="22" placeholder="端口" />
@@ -543,6 +543,10 @@ function renderConfigView() {
   const isProvider = kind === "provider";
   const isRoute = kind === "route";
   const isServers = kind === "servers";
+  // tabPageConfig 这个容器本身是 flex:1——不整体隐藏的话，它会以空白形态
+  // 占住主区上半截，把路由/编辑器/服务器视图统统推到页面底部
+  document.getElementById("tabPageConfig").style.display =
+    isFile || (!isProvider && !isRoute && !isServers) ? "flex" : "none";
   document.getElementById("currentCard").style.display =
     !isFile && !isProvider && !isRoute && !isServers ? "block" : "none";
   document.getElementById("fileView").style.display = isFile ? "flex" : "none";
