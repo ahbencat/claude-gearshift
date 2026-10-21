@@ -4,6 +4,14 @@
 > `91c28a5`); the 11 `expectedFailure` markers in `test_regressions.py`
 > are dropped and the whole suite (81 tests) passes with zero expected
 > failures.
+>
+> **Re-audit (2026-10-21):** a second audit on the fixed code found four
+> NEW defects (#9–#12), all pinned with `@unittest.expectedFailure` — see
+> "**Second audit**" below. Suite: 86 tests, `OK (expected failures=4)`;
+> defect #13 is documented behaviour, not a defect.
+>
+> **Fixed 2026-10-21:** #9–#12 are fixed (commit `a03bb31`); all markers are
+> dropped and the suite passes with zero expected failures.
 
 Date: 2026-10-20
 Scope: `linux_switch/` (the Flask Web UI, `dd-switch/`) + the local-routing
@@ -19,10 +27,10 @@ cd linux_switch/dd-switch
 | Suite | Tests | Result |
 |---|---|---|
 | `test_proxy_route.py` (pre-existing, fully mocked) | 23 | pass |
-| `test_regressions.py` (new) | 30 | pass (11 `expectedFailure` pinning known defects) |
+| `test_regressions.py` (new) | 35 | pass (4 `expectedFailure` pin #9– #12; #1–8 fixed & migrated to guards) |
 | `test_i18n.py` (new) | 5 | pass |
 | `test_local_routing_e2e.py` (new, real binary + real upstream) | 23 | pass |
-| **total** | **81** | **OK (expected failures=11)** |
+| **total** | **86** | **OK (expected failures=4)** |
 
 Run three times in a row: green every time (48–92 s per run, mostly upstream
 latency). The E2E suite skips cleanly (23 skips, 0 failures) when the endpoint
@@ -159,6 +167,47 @@ grow without bound (Python reaps older children when a new `Popen` is
 created), but the process is left in an unreaped state for the lifetime of the
 daemon.
 
+## Second audit — four more defects (2026-10-21)
+
+A follow-up audit on the fixed code. All pinned with `@unittest.expectedFailure`
+in `test_regressions.py`; a fix makes the corresponding test report an
+*unexpected success*. (All four were fixed the same day — commit `a03bb31`;
+the markers are dropped and the tests are plain regression guards now.)
+
+### 9. Same-second backups overwrite each other — **medium**
+
+The backup name is `settings.json.bak.<%Y%m%d_%H%M%S>` (second granularity).
+Two switches within the same second copy to the same name: the second copy
+overwrites the first and the **original** settings are lost — the exact
+situation a backup exists for. Same pattern in three places: the switch
+backup (`app.py:577-579`), the routing backup (`app.py:204-205`) and the
+remote backup (`ssh_manager.py:157-159`).
+
+Repro: mock `time.strftime` to a constant, switch to config A then config B
+— a single backup file remains and no backup holds the pre-A snapshot.
+
+### 10. The login password is compared with plain `==` — **low (hardening)**
+
+`app.py:728` uses `password == ACCESS_PASSWORD`, leaking password
+prefix/length through timing. `hmac.compare_digest` is the standard fix.
+
+### 11. Expired tokens are purged only when their own request arrives — **low**
+
+`app.py:727-730` adds a token per login; `_check_token` (`app.py:48-56`)
+deletes an expired token only when that token is *presented*. Tokens whose
+browser tab was closed or re-issued are never swept, so the in-memory store
+grows without bound in the long-running waitress process.
+
+### 12. The provider base_url is stored verbatim — **medium (local routing)**
+
+`route_provider_save` (`app.py:473-482`) passes `base_url` through to
+`provider add` unchanged. The proxy appends `/v1/chat/completions` itself,
+so a user pasting the full endpoint — the natural copy-paste from a provider
+page — produces `…/v1/chat/completions/v1/chat/completions`, which the
+upstream rejects with an empty `upstream_error` (reconfirmed live against
+the real binary). The save path should strip the known suffix, as the E2E
+suite already does.
+
 ## Notes / non-defects
 
 - **The `X-Forwarded-Prefix` open redirect.** `Location: //evil.example.com/login`
@@ -169,19 +218,18 @@ daemon.
 - **`i18n` parity is clean.** All 138 keys exist in both `zh` and `en`; every
   key referenced by the templates and by `ERROR_MAP` resolves in both locales.
   `test_i18n.py` keeps it that way.
+- **Remote scan reads `~/config`.** Deriving the remote provider dir from
+  `~/.claude/settings.json` yields `~/config` (`ssh_manager.py:195`), which no
+  doc mentions. `RemoteScanBehaviorTests` pins the behaviour as-is; treat any
+  future change as a deliberate convention change.
 
 ## Recommendations
 
-1. Fix #1 first — sanitise the config name in `api_switch` the same way
-   `api_config_create` already does (reject `/`, `\`, and any name that does
-   not resolve inside `CONFIG_DIR`).
-2. Fix #7 by deriving `ROUTE_BASE_URL` from `ROUTE_PORT`
-   (`f"http://127.0.0.1:{ROUTE_PORT}"`), which also removes the hardcoded port.
-3. Fix #4 by applying `_mask_secret_env` to the remote `env` as well.
-4. Fix #3 by always writing an `env` key (the selected config's env, even when
-   empty) instead of dropping it.
-5. Turn the remaining `expectedFailure` markers into plain assertions as each
-   defect is fixed.
+All defects listed above (#1–#12) are fixed — #1–#8 in `91c28a5`, #9–#12 in
+`a03bb31` — and every `expectedFailure` marker has been dropped (the tests
+are plain regression guards). Configuration trap 1 is also stripped
+automatically now, both on provider save (#12) and on import. Nothing
+outstanding.
 
 ## Reproducing
 
