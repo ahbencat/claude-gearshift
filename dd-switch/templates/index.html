@@ -54,6 +54,9 @@
   }
   .config-item .actions button:hover { background: rgba(255,255,255,.08); }
   .config-item .actions .btn-del:hover { color: var(--danger); }
+  .btn-active {
+    border-color: var(--accent); background: rgba(99,102,241,.12); color: var(--text);
+  }
   /* 供应商编辑器：网格布局的表单，标签/控件对齐规则集中在这里 */
   .pe-input {
     width: 100%; padding: 6px 10px; border-radius: var(--radius);
@@ -211,7 +214,7 @@
       <select class="server-select" id="serverSelect" onchange="onServerChange()" style="width:100%">
         <option value="local" data-i18n="localServer">本地服务器</option>
       </select>
-      <button class="btn btn-sm" onclick="openServerModal()" style="width:100%;margin-top:6px" data-i18n="manageServers">管理服务器</button>
+      <button class="btn btn-sm" id="btnManageServers" onclick="selectServers()" style="width:100%;margin-top:6px" data-i18n="manageServers">管理服务器</button>
     </div>
     <div style="padding:8px;border-bottom:1px solid var(--border)">
       <div class="config-item" id="currentConfigEntry" onclick="showCurrentConfig()" style="margin-bottom:0">
@@ -265,7 +268,7 @@
     </div>
 
     <!-- 本地路由主页 / 供应商编辑器：由左栏选择驱动，与上面的配置视图互斥 -->
-    <div id="routePage" style="display:none;flex-direction:column;gap:16px">
+    <div id="routePage" style="display:none;flex-direction:column;gap:16px;flex:1;min-height:0">
       <div class="current-card" id="routeCard" style="display:none">
         <h3 data-i18n="routeTitle">本地路由（cc-switch-proxy）</h3>
         <div id="routeStatusLine" style="font-size:13px;margin-bottom:10px;color:var(--muted)"></div>
@@ -413,8 +416,29 @@
         </ul>
       </details>
     </div>
+
+    <!-- 服务器管理：右区选择视图（原弹出框移到这里，与左栏选择驱动一致） -->
+    <div id="serverPage" style="display:none;flex-direction:column;gap:16px;flex:1;min-height:0">
+  <div class="current-card">
+    <h3 data-i18n="manageServers">管理服务器</h3>
+    <div id="serverList" style="margin-bottom:12px;overflow-y:auto"></div>
+    <div style="border-top:1px solid var(--border);padding-top:12px">
+      <div class="pe-grid pe-grid-2">
+        <input type="text" id="srvName" class="pe-input" placeholder="名称" />
+        <input type="text" id="srvHost" class="pe-input" placeholder="主机地址" />
+        <input type="number" id="srvPort" class="pe-input" value="22" placeholder="端口" />
+        <input type="text" id="srvUsername" class="pe-input" placeholder="用户名" />
+        <input type="text" id="srvKeyPath" class="pe-input" placeholder="SSH 密钥路径" />
+        <input type="password" id="srvPassphrase" class="pe-input" placeholder="密钥密码短语（可选）" />
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-top:10px">
+        <button class="btn btn-sm btn-primary" onclick="addServer()" data-i18n="add">添加</button>
+      </div>
+    </div>
   </div>
 </div>
+  </div><!-- /.main -->
+</div><!-- /.container -->
 
 <!-- confirm modal -->
 <div class="modal-overlay" id="confirmModal">
@@ -438,29 +462,6 @@
     <div class="btns">
       <button class="btn" onclick="closeNewModal()" data-i18n="cancel">取消</button>
       <button class="btn btn-primary" onclick="createConfig()" data-i18n="create">创建</button>
-    </div>
-  </div>
-</div>
-
-<!-- server management modal -->
-<div class="modal-overlay" id="serverModal">
-  <div class="modal" style="max-width:600px">
-    <h3 data-i18n="manageServers">管理服务器</h3>
-    <div id="serverList" style="max-height:300px;overflow-y:auto;margin-bottom:12px"></div>
-    <div style="border-top:1px solid var(--border);padding-top:12px">
-      <h4 style="font-size:13px;margin-bottom:8px;color:var(--muted)" data-i18n="addServer">添加服务器</h4>
-      <input type="text" id="srvName" placeholder="名称" style="width:100%;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px;margin-bottom:8px" />
-      <input type="text" id="srvHost" placeholder="主机地址" style="width:100%;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px;margin-bottom:8px" />
-      <div style="display:flex;gap:8px;margin-bottom:8px">
-        <input type="number" id="srvPort" placeholder="端口" value="22" style="width:80px;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px" />
-        <input type="text" id="srvUsername" placeholder="用户名" style="flex:1;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px" />
-      </div>
-      <input type="text" id="srvKeyPath" placeholder="SSH 密钥路径" style="width:100%;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px;margin-bottom:8px" />
-      <input type="password" id="srvPassphrase" placeholder="密钥密码短语（可选）" style="width:100%;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px;margin-bottom:12px" />
-      <div class="btns">
-        <button class="btn" onclick="closeServerModal()" data-i18n="close">关闭</button>
-        <button class="btn btn-primary" onclick="addServer()" data-i18n="add">添加</button>
-      </div>
     </div>
   </div>
 </div>
@@ -541,18 +542,23 @@ function renderConfigView() {
   const isFile = kind === "file";
   const isProvider = kind === "provider";
   const isRoute = kind === "route";
+  const isServers = kind === "servers";
   document.getElementById("currentCard").style.display =
-    !isFile && !isProvider && !isRoute ? "block" : "none";
+    !isFile && !isProvider && !isRoute && !isServers ? "block" : "none";
   document.getElementById("fileView").style.display = isFile ? "flex" : "none";
   document.getElementById("routePage").style.display =
     isProvider || isRoute ? "flex" : "none";
+  document.getElementById("serverPage").style.display = isServers ? "flex" : "none";
   document.getElementById("routeCard").style.display = isRoute ? "block" : "none";
   document.getElementById("providerEditor").style.display = isProvider ? "flex" : "none";
   document.getElementById("routeManual").style.display = isProvider ? "none" : "block";
   document.getElementById("currentConfigEntry").classList.toggle("active", !selectedItem);
   document.getElementById("routeHomeEntry").classList.toggle("active", isRoute);
+  document.getElementById("btnManageServers").classList.toggle("btn-active", isServers);
   if (isRoute || isProvider) renderRouteSidebar();
   if (isProvider) renderProviderEditor();
+  // 切换视图时回到顶部——上一个视图留下的滚动位置会让新视图看起来"沉在底部"
+  document.querySelector(".main").scrollTop = 0;
 }
 
 function selectRouteHome() {
@@ -1340,13 +1346,10 @@ function onServerChange() {
   loadAll();
 }
 
-function openServerModal() {
-  document.getElementById("serverModal").classList.add("show");
+function selectServers() {
+  selectedItem = { kind: "servers" };
+  renderConfigView();
   loadServerList();
-}
-
-function closeServerModal() {
-  document.getElementById("serverModal").classList.remove("show");
 }
 
 async function loadServerList() {
