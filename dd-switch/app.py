@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """claude-gearshift Web UI: switch Claude Code configurations from the browser."""
 
+import hmac
 import json
 import os
 import re
@@ -53,6 +54,12 @@ def _check_token():
     if time.time() - login_time > SESSION_MAX_AGE:
         del _token_store[token]
         return False
+    # Sweep other expired tokens so the store does not grow without bound
+    # in the long-running process (closed tabs, re-issued logins).
+    now = time.time()
+    for other in [t for t, info in _token_store.items()
+                  if now - info.get("login_time", 0) > SESSION_MAX_AGE]:
+        del _token_store[other]
     return True
 
 
@@ -200,10 +207,9 @@ def do_switch(config_path):
         write_json_atomic(CLAUDE_CONFIG, selected)
         return True
 
-    # Backup
-    ts = time.strftime("%Y%m%d_%H%M%S")
-    bak = CLAUDE_CONFIG.with_name(f"settings.json.bak.{ts}")
-    shutil.copy2(CLAUDE_CONFIG, bak)
+    # Backup (unique name: two switches within the same second must not
+    # overwrite each other)
+    shutil.copy2(CLAUDE_CONFIG, _unique_backup_path(CLAUDE_CONFIG))
 
     # Merge: keep non-env fields from current, replace env
     current = read_json(CLAUDE_CONFIG)
@@ -472,6 +478,13 @@ def route_providers():
 
 def route_provider_save(payload):
     """Add or update a provider. `id` present → update, else add."""
+    payload = dict(payload)
+    base_url = (payload.get("base_url") or "").rstrip("/")
+    if base_url.endswith("/v1/chat/completions"):
+        # The proxy appends this path itself; storing it verbatim would
+        # double it upstream (…/v1/chat/completions/v1/chat/completions).
+        base_url = base_url[: -len("/v1/chat/completions")]
+    payload["base_url"] = base_url
     args = ["update", "--id", payload["id"]] if payload.get("id") else ["add"]
     for flag, key in (
         ("name", "name"), ("base-url", "base_url"), ("token", "token"),
@@ -573,10 +586,21 @@ def _restore_managed_env(settings, original):
     settings["env"] = env
 
 
+def _unique_backup_path(path):
+    """Timestamped backup name that never collides: if the name is taken
+    (two backups within the same second), append -1, -2, …."""
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    candidate = path.with_name(f"{path.name}.bak.{ts}")
+    n = 0
+    while candidate.exists():
+        n += 1
+        candidate = path.with_name(f"{path.name}.bak.{ts}-{n}")
+    return candidate
+
+
 def _backup_settings():
     if CLAUDE_CONFIG.exists():
-        ts = time.strftime("%Y%m%d_%H%M%S")
-        shutil.copy2(CLAUDE_CONFIG, CLAUDE_CONFIG.with_name(f"settings.json.bak.{ts}"))
+        shutil.copy2(CLAUDE_CONFIG, _unique_backup_path(CLAUDE_CONFIG))
 
 
 def _mask_secret_env(env):
@@ -725,7 +749,8 @@ def route_stop():
 def login():
     if request.method == "POST":
         password = request.form.get("password", "")
-        if password == ACCESS_PASSWORD:
+        if hmac.compare_digest(password.encode("utf-8"),
+                               ACCESS_PASSWORD.encode("utf-8")):
             token = str(uuid.uuid4())
             _token_store[token] = {"login_time": time.time()}
             resp = make_response(redirect(_index_url()))

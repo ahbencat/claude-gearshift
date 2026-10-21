@@ -6,22 +6,38 @@ Every test here pins down one defect (all fixed 2026-10-20 — the
 test turned green). If a regression reintroduces one of these bugs, the
 corresponding test fails normally again.
 
-The defects pinned here (2026-10-20):
+Defect catalogue (2026-10-21):
 
-===  ====================================================================
- 1   ``/api/switch`` reads files outside the config dir (path traversal)
- 2   ``/api/configs/<name>`` PUT/DELETE on a directory raises a 500
- 3   switching to a config without ``env`` silently deletes the live env
- 4   the remote ``/api/servers/<name>/current`` returns unmasked tokens
- 5   ``/api/servers`` with a non-numeric port raises a 500
- 6   deleting an unknown server reports success
- 7   ``DD_SWITCH_ROUTE_PORT`` is ignored by the gateway URL / health probe
- 8   the spawned proxy is never reaped (zombie process)
-===  ====================================================================
+===  =====================================================================
+ #   description (status)
+===  =====================================================================
+ 1   ``/api/switch`` path traversal intersection          FIXED  91c28a5
+ 2   ``/api/configs/<name>`` dir PUT/DELETE → 500        FIXED  91c28a5
+ 3   switching to a config without ``env`` wipes env      FIXED  91c28a5
+ 4   remote ``/current`` returns unmasked tokens          FIXED  91c28a5
+ 5   non-numeric port → 500                              FIXED  91c28a5
+ 6   deleting an unknown server reports success           FIXED  91c28a5
+ 7   ``DD_SWITCH_ROUTE_PORT`` ignored by gateway URL      FIXED  91c28a5
+ 8   the spawned proxy is never reaped (zombie)           FIXED  91c28a5
+ 9   same-second backups overwrite each other             FIXED
+10   the login password is compared with plain ``==``     FIXED
+11   expired tokens purged only when presented            FIXED
+12   the provider base_url is stored verbatim (doubled)   FIXED
+===  =====================================================================
+
+Defects 1-8 were fixed in commit ``91c28a5``; defects 9-12 are fixed
+likewise. All tests remain in this file as plain regression guards
+(markers dropped). A future regression turns them red again directly.
+
+Besides the defects, one test documents current behaviour that the docs do
+not mention: ``RemoteScanBehaviorTests`` pins the remote scan directory
+(``~/config``, derived in ssh_manager.py:195). It is a passing test — change
+it deliberately if the remote convention ever changes.
 """
 
 import json
 import sys
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -325,6 +341,135 @@ class ProxyProcessReapingTests(AppTestCase):
 
         self.assertTrue(proc.waited,
                         "the child process must be waited on to avoid a zombie")
+
+
+class BackupCollisionTests(AppTestCase):
+    """Defect 9 — backups use second-granularity names, so they collide.
+
+    The backup name is ``settings.json.bak.<%Y%m%d_%H%M%S>``. Two switches
+    within the same second copy to the same name: the second copy overwrites
+    the first, and the *original* settings are lost. (The same pattern exists
+    in the routing backup at app.py:204 and the remote one at
+    ssh_manager.py:158.)
+    """
+
+    def test_same_second_switches_keep_two_distinct_backups(self):
+        original = {"env": {"T": "origin"}, "theme": "dark"}
+        self.write_settings(original)
+        self.write_config("p1.json", {"env": {"T": "one"}})
+        self.write_config("p2.json", {"env": {"T": "two"}})
+
+        client = self.authed_client()
+        with mock.patch.object(app.time, "strftime", return_value="20260101_000000"):
+            self.assertEqual(client.post("/api/switch", json={"name": "p1.json"}).status_code, 200)
+            self.assertEqual(client.post("/api/switch", json={"name": "p2.json"}).status_code, 200)
+
+        backups = list(self.root.glob("settings.json.bak.*"))
+        self.assertEqual(len(backups), 2,
+                         "the second backup must not overwrite the first")
+        contents = [json.loads(b.read_text(encoding="utf-8")) for b in backups]
+        self.assertIn(original, contents,
+                      "one backup must still hold the pre-switch settings")
+
+
+class PasswordCompareTimingTests(AppTestCase):
+    """Defect 10 — the login password is compared with plain ``==``.
+
+    A timing adversary can learn the password length/prefix byte by byte.
+    ``hmac.compare_digest`` is the standard fix.
+    """
+
+    def test_login_password_comparison_is_constant_time(self):
+        app_py = Path(__file__).resolve().parents[1] / "app.py"
+        source = app_py.read_text(encoding="utf-8")
+        self.assertNotIn(
+            "password == ACCESS_PASSWORD", source,
+            "plain == on the password is timing-observable; use hmac.compare_digest",
+        )
+
+
+class TokenSweepTests(AppTestCase):
+    """Defect 11 — expired tokens are only purged when *their own* request
+    comes in.
+
+    Each login adds an entry to the in-memory store; ``_check_token`` deletes
+    an expired token only when that token is presented. A long-running
+    waitress process therefore keeps every token whose browser tab was closed
+    (or was re-issued) — the store grows without bound.
+    """
+
+    def test_expired_tokens_are_swept_by_any_authenticated_request(self):
+        stale = time.time() - 10 ** 9
+        app._token_store["old1"] = {"login_time": stale}
+        app._token_store["old2"] = {"login_time": stale}
+        app._token_store["fresh"] = {"login_time": time.time()}
+
+        client = self.client()
+        client.set_cookie("dd_token", "fresh")
+        self.assertEqual(client.get("/api/current").status_code, 200)
+
+        self.assertNotIn("old1", app._token_store,
+                         "an authenticated request must sweep other expired tokens")
+        self.assertNotIn("old2", app._token_store)
+
+
+class ProviderBaseUrlNormalizationTests(AppTestCase):
+    """Defect 12 — the provider base_url is stored verbatim.
+
+    The proxy appends ``/v1/chat/completions`` itself, so a user pasting the
+    full endpoint produces ``…/v1/chat/completions/v1/chat/completions`` at the
+    upstream, which rejects the request. The save path must strip the known
+    suffix (as the E2E suite's ``upstream_base_url()`` does).
+    """
+
+    def test_provider_save_strips_a_full_chat_completions_suffix(self):
+        captured = []
+
+        def fake_cli(args, *a, **k):
+            captured.append(args)
+            return {"ok": True}
+
+        with mock.patch.object(app, "_proxy_cli", side_effect=fake_cli):
+            app.route_provider_save({
+                "name": "X",
+                "base_url": "https://gw.example.com/v1/chat/completions",
+                "token": "t",
+                "set_current": True,
+            })
+
+        args = captured[-1]
+        base = args[args.index("--base-url") + 1]
+        self.assertFalse(
+            base.endswith("/v1/chat/completions"),
+            f"base_url must be stored without the path the proxy appends: {base}",
+        )
+
+
+class RemoteScanBehaviorTests(AppTestCase):
+    """Documents defect-adjacent behaviour — remote_scan_configs scans the
+    derived directory ``~/config`` (app.py-free derivation in
+    ssh_manager.py:195: ``~/.claude/settings.json`` → parent → parent →
+    /config). The docs never state this location; this test pins the current
+    behaviour so a change is a conscious decision, not an accident.
+    """
+
+    def test_remote_scan_reads_the_derived_config_dir(self):
+        import io
+        import ssh_manager
+
+        payload = {"env": {"X": "1"}}
+        sftp = mock.MagicMock()
+        sftp.listdir.return_value = ["a.json", "sample.json", "notes.txt"]
+        sftp.open.return_value.__enter__.return_value = io.StringIO(json.dumps(payload))
+        client = mock.MagicMock()
+        client.open_sftp.return_value = sftp
+
+        with mock.patch.object(ssh_manager, "get_ssh_client", return_value=client):
+            configs = ssh_manager.remote_scan_configs({"name": "r"}, "pw")
+
+        sftp.listdir.assert_called_once_with("~/config")
+        sftp.open.assert_called_once_with("~/config/a.json", "r")
+        self.assertEqual(configs, [{"name": "a.json", "content": payload}])
 
 
 if __name__ == "__main__":

@@ -157,6 +157,14 @@ def remote_write_config(server: dict, password: str, content: dict):
             sftp.stat(remote_path)
             ts = time.strftime("%Y%m%d_%H%M%S")
             backup_path = f"{remote_path}.bak.{ts}"
+            n = 0
+            while True:
+                try:
+                    sftp.stat(backup_path)
+                except FileNotFoundError:
+                    break
+                n += 1
+                backup_path = f"{remote_path}.bak.{ts}-{n}"
             sftp.rename(remote_path, backup_path)
         except FileNotFoundError:
             pass
