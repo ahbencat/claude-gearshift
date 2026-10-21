@@ -324,5 +324,67 @@ class ProviderApiFormatTests(RouteTestCase):
         self.assertIn("gemini_native", args)
 
 
+class ImportTests(RouteTestCase):
+    """Device-side import: uploaded files are staged and handed to the CLI.
+
+    The source is the browsing device (e.g. a Windows box), not the server's
+    config/ — payloads arrive in the request body, get staged into a temp dir
+    and are passed to `provider import --dir` from there.
+    """
+
+    def _capture(self):
+        captured = {}
+
+        def fake(args, *a, **k):
+            captured["args"] = args
+            stage = Path(args[args.index("--dir") + 1])
+            captured["files"] = {
+                p.name: json.loads(p.read_text(encoding="utf-8"))
+                for p in stage.glob("*.json")
+            }
+            return {"ok": True, "imported": [n[:-len(".json")] for n in captured["files"]],
+                    "errors": []}
+
+        self.proxy_cli_mock.side_effect = fake
+        return captured
+
+    def test_uploaded_files_are_staged_for_the_cli(self):
+        captured = self._capture()
+        content = {"env": {"ANTHROPIC_BASE_URL": "https://u.example"}}
+        result = app.route_provider_import_files(
+            [{"name": "my_provider.json", "content": content}]
+        )
+
+        self.assertEqual(result["imported"], ["my_provider"])
+        self.assertEqual(captured["args"][0], "import")
+        self.assertEqual(captured["files"], {"my_provider.json": content})
+
+    def test_import_strips_the_chat_completions_suffix(self):
+        captured = self._capture()
+        app.route_provider_import_files([
+            {"name": "x", "content": {
+                "env": {"ANTHROPIC_BASE_URL": "https://u.example/v1/chat/completions"}}},
+        ])
+        self.assertEqual(captured["files"]["x.json"]["env"]["ANTHROPIC_BASE_URL"],
+                         "https://u.example")
+
+    def test_import_rejects_an_empty_batch(self):
+        with self.assertRaises(app.RouteError):
+            app.route_provider_import_files([])
+
+    def test_import_rejects_a_path_in_the_name(self):
+        with self.assertRaises(app.RouteError):
+            app.route_provider_import_files([{"name": "../evil.json", "content": {}}])
+        self.proxy_cli_mock.assert_not_called()
+
+    def test_api_import_requires_files(self):
+        app._token_store["t"] = {"login_time": time.time()}
+        client = app.app.test_client()
+        client.set_cookie("dd_token", "t")
+        res = client.post("/api/route/providers/import", json={"set_current": False})
+        self.assertEqual(res.status_code, 400)
+        self.proxy_cli_mock.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

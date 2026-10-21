@@ -476,15 +476,21 @@ def route_providers():
     return data
 
 
+def _strip_chat_suffix(url):
+    """Drop a pasted full endpoint's /v1/chat/completions tail.
+
+    The proxy appends this path itself; storing it verbatim would double it
+    upstream (…/v1/chat/completions/v1/chat/completions)."""
+    url = (url or "").rstrip("/")
+    if url.endswith("/v1/chat/completions"):
+        url = url[: -len("/v1/chat/completions")]
+    return url
+
+
 def route_provider_save(payload):
     """Add or update a provider. `id` present → update, else add."""
     payload = dict(payload)
-    base_url = (payload.get("base_url") or "").rstrip("/")
-    if base_url.endswith("/v1/chat/completions"):
-        # The proxy appends this path itself; storing it verbatim would
-        # double it upstream (…/v1/chat/completions/v1/chat/completions).
-        base_url = base_url[: -len("/v1/chat/completions")]
-    payload["base_url"] = base_url
+    payload["base_url"] = _strip_chat_suffix(payload.get("base_url"))
     args = ["update", "--id", payload["id"]] if payload.get("id") else ["add"]
     for flag, key in (
         ("name", "name"), ("base-url", "base_url"), ("token", "token"),
@@ -545,6 +551,44 @@ def route_provider_import(directory, set_current=False):
     if set_current:
         args += ["--set-current"]
     return _proxy_cli(args, timeout=60)
+
+
+def route_provider_import_files(files, set_current=False):
+    """Import providers from config files uploaded by the browser.
+
+    The source is the device the user browses from (e.g. a Windows box), not
+    the server's config/. Payloads are staged into a temp dir and handed to
+    `provider import`, so the file→provider rules (name = stem, `env` block or
+    bare env) stay in one place. `files` is [{"name", "content"}, …]."""
+    if not files:
+        raise RouteError("缺少要导入的文件")
+    seen = set()
+    with tempfile.TemporaryDirectory(prefix="dd-switch-import.") as tmp:
+        tmpdir = Path(tmp)
+        for item in files:
+            if not isinstance(item, dict):
+                raise RouteError("文件项格式不正确")
+            name = (item.get("name") or "").strip()
+            content = item.get("content")
+            if not name or "/" in name or "\\" in name or "\x00" in name:
+                raise RouteError(f"文件名不合法: {name or '(空)'}")
+            if not name.endswith(".json"):
+                name += ".json"
+            if name in seen:
+                raise RouteError(f"重复的文件名: {name}")
+            seen.add(name)
+            if not isinstance(content, dict):
+                raise RouteError(f"{name}: 配置必须是 JSON 对象")
+            content = dict(content)
+            if "env" in content:
+                env = dict(content.get("env") or {})
+                if isinstance(env.get("ANTHROPIC_BASE_URL"), str):
+                    env["ANTHROPIC_BASE_URL"] = _strip_chat_suffix(env["ANTHROPIC_BASE_URL"])
+                content["env"] = env
+            elif isinstance(content.get("ANTHROPIC_BASE_URL"), str):
+                content["ANTHROPIC_BASE_URL"] = _strip_chat_suffix(content["ANTHROPIC_BASE_URL"])
+            write_json_atomic(tmpdir / name, content)
+        return route_provider_import(tmp, set_current)
 
 
 def _snapshot_managed_env(settings_env):
@@ -1025,9 +1069,13 @@ def api_route_provider_current():
 @login_required
 def api_route_provider_import():
     body = request.get_json(force=True) or {}
+    # 导入源是浏览器所在设备上传的文件，不是服务器上的 config/
+    files = body.get("files")
+    if not isinstance(files, list) or not files:
+        return jsonify({"error": "缺少要导入的文件内容"}), 400
     with _route_lock:
         try:
-            return jsonify(route_provider_import(str(CONFIG_DIR), bool(body.get("set_current"))))
+            return jsonify(route_provider_import_files(files, bool(body.get("set_current"))))
         except RouteError as e:
             return jsonify({"error": str(e)}), 400
         except Exception as e:

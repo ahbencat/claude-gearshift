@@ -99,7 +99,7 @@ SQLite database.
 > start → apply → traffic → stop lifecycle all pass. Prerequisites missing
 > (no binary, no WebKitGTK runtime libs, no endpoint) ⇒ the suite skips.
 > Details in [`TEST-REPORT.md`](TEST-REPORT.md). A top-level `"api_format"` in
-> `config/*.json` is likewise honored on `provider import`.
+> an imported file is likewise honored on `provider import`.
 
 **When do you actually need it** — local routing only earns its keep in two
 situations:
@@ -122,8 +122,9 @@ routing.
 **How it works**
 
 1. **Add providers** — the local-routing panel lists providers from
-   `~/.cc-switch/cc-switch.db`. Add/edit them there, or import the existing
-   `config/*.json` in one click. Pick one as current. Switching providers
+   `~/.cc-switch/cc-switch.db`. Add/edit them there, or import `*.json` config
+   files from the machine you browse from (e.g. a Windows box) via the file
+   picker — the server's `config/` is not involved. Pick one as current. Switching providers
    later is one step — set another as current and the router picks it up on
    the next request, no restart.
 2. **Start routing** — dd-switch spawns `cc-switch-proxy --db … --port 9301`
