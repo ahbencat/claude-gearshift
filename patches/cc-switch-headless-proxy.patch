@@ -380,10 +380,10 @@ index 263a0b93..4061d20d 100644
  mod settings;
 diff --git a/src-tauri/src/provider_cli.rs b/src-tauri/src/provider_cli.rs
 new file mode 100644
-index 00000000..5178420f
+index 00000000..38450f46
 --- /dev/null
 +++ b/src-tauri/src/provider_cli.rs
-@@ -0,0 +1,487 @@
+@@ -0,0 +1,653 @@
 +//! `cc-switch-proxy provider` — 在无桌面端的情况下管理 cc-switch DB 里的供应商。
 +//!
 +//! 复用 cc-switch 自己的 DAO（`Database::save_provider` / `set_current_provider` …），
@@ -433,6 +433,12 @@ index 00000000..5178420f
 +  --api-format <F>                  上游协议声明 → meta.apiFormat
 +                                    （anthropic / openai_chat / openai_responses /
 +                                    gemini_native；缺省 anthropic，即原样透传）
++  --model-nodes <JSON>              混合类型节点表 → settings_config.modelNodes
++                                    （[{\"name\":\"a\",\"url\":\"https://…\",\"key\":\"sk-…\"}]；
++                                    url/key 可省略，省略的字段回落到默认接入点）
++  --model-routes <JSON>             每模型路由 → settings_config.modelRoutes
++                                    （{\"model-a\":{\"node\":\"a\",\"format\":\"openai_chat\"}}；
++                                    模型键不带 [1m] 后缀，引擎匹配前会剥掉）
 +  --id <ID>         供应商标识（update 必填；add 省略则按名称生成）
 +  --set-current     保存后设为当前供应商
 +  传空值（如 --token ''）可清空对应字段。
@@ -543,12 +549,19 @@ index 00000000..5178420f
 +    apply_env(&mut env, &flags, "opus", "ANTHROPIC_DEFAULT_OPUS_MODEL");
 +
 +    // 协议声明进 meta.apiFormat（引擎 SSOT）；update 不传 --api-format 时保留原值。
-+    let meta = resolve_meta(
-+        existing.as_ref().and_then(|p| p.meta.as_ref()),
-+        &flags,
-+    )?;
++    let meta = resolve_meta(existing.as_ref().and_then(|p| p.meta.as_ref()), &flags)?;
 +
-+    let settings_config = json!({ "env": Value::Object(env) });
++    // settings_config 以现有内容为底（保留 modelNodes / modelRoutes / 旧式
++    // api_format 等顶层键），env 用上面合并的结果覆盖。
++    let mut config = existing
++        .as_ref()
++        .and_then(|p| p.settings_config.as_object())
++        .cloned()
++        .unwrap_or_default();
++    config.insert("env".to_string(), Value::Object(env));
++    apply_model_flag(&mut config, &flags, "model-nodes", "modelNodes")?;
++    apply_model_flag(&mut config, &flags, "model-routes", "modelRoutes")?;
++    let settings_config = Value::Object(config);
 +    let mut provider = Provider::with_id(id.clone(), name, settings_config, None);
 +    provider.meta = meta;
 +    db.save_provider(&app, &provider)
@@ -722,6 +735,102 @@ index 00000000..5178420f
 +    }
 +}
 +
++/// 把 `--flag-key` 里的 JSON 写进 settings_config 的 `config-key`；传空字符串则删除该键。
++/// 写入前按表形状校验（节点必须有 name；路由至少有 node/format 之一且 format 合法）。
++fn apply_model_flag(
++    config: &mut Map<String, Value>,
++    flags: &HashMap<String, String>,
++    flag_key: &str,
++    config_key: &str,
++) -> Result<(), String> {
++    let Some(raw) = flags.get(flag_key) else {
++        return Ok(());
++    };
++    if raw.trim().is_empty() {
++        config.remove(config_key);
++        return Ok(());
++    }
++    let value: Value =
++        serde_json::from_str(raw).map_err(|e| format!("--{flag_key} 不是合法 JSON: {e}"))?;
++    match config_key {
++        "modelNodes" => validate_model_nodes(&value, flag_key)?,
++        _ => validate_model_routes(&value, flag_key)?,
++    }
++    config.insert(config_key.to_string(), value);
++    Ok(())
++}
++
++/// 节点表：`[{name, url?, key?}]`；name 必填且不重复，url/key 可省略。
++fn validate_model_nodes(value: &Value, flag_key: &str) -> Result<(), String> {
++    let items = value
++        .as_array()
++        .ok_or_else(|| format!("--{flag_key} 应为节点数组"))?;
++    let mut seen = std::collections::HashSet::new();
++    for (i, item) in items.iter().enumerate() {
++        let obj = item
++            .as_object()
++            .ok_or_else(|| format!("--{flag_key}[{i}] 应为对象"))?;
++        let name = obj
++            .get("name")
++            .and_then(Value::as_str)
++            .map(str::trim)
++            .filter(|s| !s.is_empty())
++            .ok_or_else(|| format!("--{flag_key}[{i}] 缺少非空 name"))?;
++        if !seen.insert(name.to_string()) {
++            return Err(format!("--{flag_key} 节点名重复: {name}"));
++        }
++        for field in ["url", "key"] {
++            if let Some(v) = obj.get(field) {
++                if !v.is_string() {
++                    return Err(format!("--{flag_key}[{i}].{field} 应为字符串"));
++                }
++            }
++        }
++    }
++    Ok(())
++}
++
++/// 路由表：`{model: {node?, format?}}`；至少一项；format 取值域与 --api-format 一致；
++/// 模型键不带 `[1m]` 后缀（引擎匹配前会剥掉，带后缀的键永远匹配不上）。
++fn validate_model_routes(value: &Value, flag_key: &str) -> Result<(), String> {
++    let routes = value
++        .as_object()
++        .ok_or_else(|| format!("--{flag_key} 应为对象 {{model: …}}"))?;
++    for (model, route) in routes {
++        if model.trim().is_empty() {
++            return Err(format!("--{flag_key} 存在空模型名"));
++        }
++        if model.to_ascii_lowercase().ends_with("[1m]") {
++            return Err(format!(
++                "--{flag_key} 的键不要带 [1m] 后缀（引擎匹配前会剥掉）: {model}"
++            ));
++        }
++        let obj = route
++            .as_object()
++            .ok_or_else(|| format!("--{flag_key}[{model}] 应为对象"))?;
++        let node = obj.get("node").and_then(Value::as_str).map(str::trim);
++        let fmt = obj.get("format").and_then(Value::as_str).map(str::trim);
++        if node.is_none() && fmt.is_none() {
++            return Err(format!("--{flag_key}[{model}] 至少要指定 node 或 format"));
++        }
++        if node.is_some_and(str::is_empty) {
++            return Err(format!("--{flag_key}[{model}].node 不能为空字符串"));
++        }
++        if let Some(fmt) = fmt {
++            if fmt.is_empty() {
++                return Err(format!("--{flag_key}[{model}].format 不能为空字符串"));
++            }
++            if !crate::proxy::model_route::MODEL_ROUTE_FORMATS.contains(&fmt) {
++                return Err(format!(
++                    "--{flag_key}[{model}].format 未知的接口形态: {fmt}（可选 {}）",
++                    crate::proxy::model_route::MODEL_ROUTE_FORMATS.join("/")
++                ));
++            }
++        }
++    }
++    Ok(())
++}
++
 +/// `--api-format` → `meta.apiFormat`（引擎判定上游协议的 SSOT）。
 +/// 不传时原样保留已有 meta（update 不洗掉协议声明）。
 +fn resolve_meta(
@@ -869,6 +978,301 @@ index 00000000..5178420f
 +            Some("https://x")
 +        );
 +        assert!(env.get("ANTHROPIC_AUTH_TOKEN").is_none());
++    }
++
++    #[test]
++    fn apply_model_flag_writes_validates_and_clears() {
++        let nodes = r#"[{"name":"a","url":"https://a","key":"sk-a"}]"#;
++        let routes = r#"{"mimo-v2.6":{"node":"a","format":"openai_chat"}}"#;
++        let mut flags = HashMap::new();
++        flags.insert("model-nodes".to_string(), nodes.to_string());
++        flags.insert("model-routes".to_string(), routes.to_string());
++
++        let mut config = Map::new();
++        apply_model_flag(&mut config, &flags, "model-nodes", "modelNodes").unwrap();
++        apply_model_flag(&mut config, &flags, "model-routes", "modelRoutes").unwrap();
++        assert_eq!(
++            config.get("modelNodes").unwrap(),
++            &serde_json::from_str::<Value>(nodes).unwrap()
++        );
++        assert_eq!(
++            config.get("modelRoutes").unwrap(),
++            &serde_json::from_str::<Value>(routes).unwrap()
++        );
++
++        // 空字符串 = 清除该表
++        let mut flags = HashMap::new();
++        flags.insert("model-nodes".to_string(), String::new());
++        apply_model_flag(&mut config, &flags, "model-nodes", "modelNodes").unwrap();
++        assert!(config.get("modelNodes").is_none());
++    }
++
++    #[test]
++    fn apply_model_flag_rejects_bad_payloads() {
++        let cases: [(&str, &str, &str); 8] = [
++            ("model-nodes", "not-json", "modelNodes"),
++            ("model-nodes", r#"{"name":"a"}"#, "modelNodes"), // 应为数组
++            ("model-nodes", r#"[{"url":"https://a"}]"#, "modelNodes"), // 缺 name
++            (
++                "model-nodes",
++                r#"[{"name":"a"},{"name":"a"}]"#,
++                "modelNodes",
++            ), // 重名
++            ("model-routes", "not-json", "modelRoutes"),
++            ("model-routes", r#"{"m":{}}"#, "modelRoutes"), // 无 node/format
++            ("model-routes", r#"{"m":{"format":"ftp"}}"#, "modelRoutes"), // 未知形态
++            (
++                "model-routes",
++                r#"{"m[1M]":{"format":"anthropic"}}"#,
++                "modelRoutes",
++            ), // 带 [1m]
++        ];
++        for (flag_key, raw, config_key) in cases {
++            let mut flags = HashMap::new();
++            flags.insert(flag_key.to_string(), raw.to_string());
++            let mut config = Map::new();
++            let result = apply_model_flag(&mut config, &flags, flag_key, config_key);
++            assert!(result.is_err(), "应为非法 payload: {flag_key}={raw}");
++            assert!(config.is_empty(), "校验失败时不得写入: {flag_key}={raw}");
++        }
++    }
++}
+diff --git a/src-tauri/src/proxy/forwarder.rs b/src-tauri/src/proxy/forwarder.rs
+index aea53ada..d65106eb 100644
+--- a/src-tauri/src/proxy/forwarder.rs
++++ b/src-tauri/src/proxy/forwarder.rs
+@@ -1698,6 +1698,19 @@ impl RequestForwarder {
+                 }
+             }
+         }
++        // 每模型节点覆盖（settings_config.modelRoutes/modelNodes）：命中节点带
++        // url 就替换 base_url，写法与上方 Copilot 动态 endpoint 同型；供应商
++        // 声明 isFullUrl 时保持原状（isFullUrl 分支只按 base_url 拼 URL）。
++        if adapter.name() == "Claude" && !is_full_url {
++            if let Some(url) = super::model_route::lookup(
++                provider,
++                mapped_body.get("model").and_then(|value| value.as_str()),
++            )
++            .and_then(|matched| matched.base_url)
++            {
++                base_url = url;
++            }
++        }
+         let resolved_claude_api_format = if adapter.name() == "Claude" {
+             Some(
+                 self.resolve_claude_api_format(provider, &mapped_body, is_copilot)
+@@ -2243,6 +2256,19 @@ impl RequestForwarder {
+                 }
+             }
+ 
++            // 每模型节点 key 覆盖（settings_config.modelRoutes/modelNodes）：
++            // 仅对普通 key 认证的 Claude 供应商生效，OAuth 策略的 token 由上方接管。
++            if auth.strategy == AuthStrategy::Anthropic {
++                if let Some(key) = super::model_route::lookup(
++                    provider,
++                    filtered_body.get("model").and_then(|value| value.as_str()),
++                )
++                .and_then(|matched| matched.api_key)
++                {
++                    auth.api_key = key;
++                }
++            }
++
+             for secret in std::iter::once(&auth.api_key).chain(auth.access_token.iter()) {
+                 if !secret.is_empty() && !log_secrets.contains(secret) {
+                     log_secrets.push(secret.clone());
+@@ -3146,6 +3172,15 @@ impl RequestForwarder {
+         is_copilot: bool,
+     ) -> String {
+         if !is_copilot {
++            // 每模型路由（settings_config.modelRoutes/modelNodes）：命中模型
++            // 声明了 format 就按它走；未命中回落到供应商级单协议判定。
++            if let Some(model) = body.get("model").and_then(|value| value.as_str()) {
++                if let Some(format) = super::model_route::lookup(provider, Some(model))
++                    .and_then(|matched| matched.api_format)
++                {
++                    return format;
++                }
++            }
+             return super::providers::get_claude_api_format(provider).to_string();
+         }
+ 
+diff --git a/src-tauri/src/proxy/mod.rs b/src-tauri/src/proxy/mod.rs
+index 4a8bfd41..951ad839 100644
+--- a/src-tauri/src/proxy/mod.rs
++++ b/src-tauri/src/proxy/mod.rs
+@@ -21,6 +21,7 @@ pub(crate) mod json_canonical;
+ pub mod log_codes;
+ pub mod media_sanitizer;
+ pub mod model_mapper;
++pub mod model_route;
+ pub mod opaque_state_rectifier;
+ pub mod provider_router;
+ pub mod providers;
+diff --git a/src-tauri/src/proxy/model_route.rs b/src-tauri/src/proxy/model_route.rs
+new file mode 100644
+index 00000000..e5ad59b1
+--- /dev/null
++++ b/src-tauri/src/proxy/model_route.rs
+@@ -0,0 +1,160 @@
++//! 每模型传输覆盖（headless 补丁自有模块）。
++//!
++//! 数据存放在 `settings_config`（无类型 JSON）里，与 `env` 平级：
++//!
++//! ```json
++//! {
++//!   "env": { "ANTHROPIC_BASE_URL": "https://default", "ANTHROPIC_AUTH_TOKEN": "sk-default" },
++//!   "modelNodes":  [{ "name": "nodeA", "url": "https://a", "key": "sk-a" }],
++//!   "modelRoutes": { "mimo-v2.6": { "node": "nodeA", "format": "openai_chat" } }
++//! }
++//! ```
++//!
++//! 三种用法落在同一张表上：节点给全 url+key = 独立接入点；只给 key = 多 key 补充；
++//! 路由只给 format = 单纯换接口形态。节点省略的字段回落到供应商默认值。
++//!
++//! 模型表按键匹配前会剥掉 `[1m]` 上下文标记 —— forwarder 在任何按模型决策之前
++//! 就把 `[1m]` 剥掉了（`model_mapper::strip_one_m_suffix_for_upstream`），所以
++//! 键必须写剥后缀的名字；这里匹配时也做同样的剥离兜底。
++
++use serde_json::Value;
++
++use super::model_mapper::strip_one_m_suffix_for_upstream;
++use crate::provider::Provider;
++
++/// 每模型路由可用的协议值；与 `get_claude_api_format` 的取值域一致。
++pub const MODEL_ROUTE_FORMATS: [&str; 4] = [
++    "anthropic",
++    "openai_chat",
++    "openai_responses",
++    "gemini_native",
++];
++
++/// 每模型命中的传输覆盖；`None` 字段回落到供应商默认值。
++pub struct ModelRouteMatch {
++    /// 该模型使用的上游接口形态。
++    pub api_format: Option<String>,
++    /// 该模型使用的接入点（节点 url）。
++    pub base_url: Option<String>,
++    /// 该模型使用的凭据（节点 key）。
++    pub api_key: Option<String>,
++}
++
++/// 依据请求模型名在 `settings_config.modelRoutes` / `modelNodes` 里查覆盖。
++/// 未命中、表缺失或结构不合法时返回 `None`（走原有单协议路径）。
++pub fn lookup(provider: &Provider, model: Option<&str>) -> Option<ModelRouteMatch> {
++    let model = strip_one_m_suffix_for_upstream(model?);
++    let routes = provider.settings_config.get("modelRoutes")?.as_object()?;
++    let route = routes.get(model)?.as_object()?;
++
++    let nodes = provider
++        .settings_config
++        .get("modelNodes")
++        .and_then(Value::as_array);
++    let node = route.get("node").and_then(Value::as_str).and_then(|name| {
++        nodes.and_then(|list| {
++            list.iter().find_map(|entry| {
++                let entry = entry.as_object()?;
++                (entry.get("name").and_then(Value::as_str) == Some(name)).then_some(entry)
++            })
++        })
++    });
++
++    Some(ModelRouteMatch {
++        api_format: route
++            .get("format")
++            .and_then(Value::as_str)
++            .filter(|f| MODEL_ROUTE_FORMATS.contains(f))
++            .map(str::to_string),
++        base_url: node
++            .and_then(|n| n.get("url"))
++            .and_then(Value::as_str)
++            .map(str::trim)
++            .filter(|s| !s.is_empty())
++            .map(|s| s.trim_end_matches('/').to_string()),
++        api_key: node
++            .and_then(|n| n.get("key"))
++            .and_then(Value::as_str)
++            .map(str::trim)
++            .filter(|s| !s.is_empty())
++            .map(str::to_string),
++    })
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use serde_json::json;
++
++    fn provider_with(config: Value) -> Provider {
++        Provider::with_id("p".to_string(), "P".to_string(), config, None)
++    }
++
++    fn config(nodes: Value, routes: Value) -> Value {
++        json!({
++            "env": {
++                "ANTHROPIC_BASE_URL": "https://default.example",
++                "ANTHROPIC_AUTH_TOKEN": "sk-default",
++            },
++            "modelNodes": nodes,
++            "modelRoutes": routes,
++        })
++    }
++
++    #[test]
++    fn lookup_returns_full_node_override() {
++        let provider = provider_with(config(
++            json!([{ "name": "a", "url": "https://a.example/", "key": "sk-a" }]),
++            json!({ "mimo-v2.6": { "node": "a", "format": "openai_chat" } }),
++        ));
++        let m = lookup(&provider, Some("mimo-v2.6")).unwrap();
++        assert_eq!(m.api_format.as_deref(), Some("openai_chat"));
++        assert_eq!(m.base_url.as_deref(), Some("https://a.example"));
++        assert_eq!(m.api_key.as_deref(), Some("sk-a"));
++    }
++
++    #[test]
++    fn lookup_strips_one_m_marker_before_matching() {
++        let provider = provider_with(config(
++            json!([{ "name": "a", "key": "sk-a" }]),
++            json!({ "hy4-preview": { "node": "a" } }),
++        ));
++        let m = lookup(&provider, Some("hy4-preview[1M]")).unwrap();
++        assert!(m.api_format.is_none());
++        assert!(m.base_url.is_none());
++        assert_eq!(m.api_key.as_deref(), Some("sk-a"));
++    }
++
++    #[test]
++    fn lookup_supports_format_only_route() {
++        let provider = provider_with(config(
++            json!([]),
++            json!({ "deepseek-v4": { "format": "openai_responses" } }),
++        ));
++        let m = lookup(&provider, Some("deepseek-v4")).unwrap();
++        assert_eq!(m.api_format.as_deref(), Some("openai_responses"));
++        assert!(m.base_url.is_none());
++        assert!(m.api_key.is_none());
++    }
++
++    #[test]
++    fn lookup_ignores_unknown_format_and_blank_fields() {
++        let provider = provider_with(config(
++            json!([{ "name": "a", "url": "  ", "key": "" }]),
++            json!({ "m": { "node": "a", "format": "ftp" } }),
++        ));
++        let m = lookup(&provider, Some("m")).unwrap();
++        assert!(m.api_format.is_none());
++        assert!(m.base_url.is_none());
++        assert!(m.api_key.is_none());
++    }
++
++    #[test]
++    fn lookup_misses_without_tables_or_model() {
++        let bare = provider_with(json!({ "env": {} }));
++        assert!(lookup(&bare, Some("m")).is_none());
++        let provider = provider_with(config(json!([]), json!({ "other": {} })));
++        assert!(lookup(&provider, Some("m")).is_none());
++        assert!(lookup(&provider, None).is_none());
 +    }
 +}
 diff --git a/src-tauri/src/proxy_cli.rs b/src-tauri/src/proxy_cli.rs

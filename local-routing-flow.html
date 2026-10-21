@@ -406,7 +406,7 @@
 
         <line class="edge-live" x1="508" y1="212" x2="594" y2="212" marker-end="url(#a1l)" />
         <text class="node-sub" x="551" y="188" text-anchor="middle">格式转换</text>
-        <text class="node-sub" x="551" y="201" text-anchor="middle">+ 档位映射</text>
+        <text class="node-sub" x="551" y="201" text-anchor="middle">+ 按模型分流（modelRoutes）</text>
 
         <rect class="node" x="600" y="184" width="196" height="56" rx="3" />
         <text class="node-label" x="698" y="217" text-anchor="middle">上游（任意格式）</text>
@@ -428,7 +428,7 @@
 
     <figure>
       <svg viewBox="0 0 820 1058" role="img"
-           aria-label="本地路由生命周期流程图：读取配置、读状态文件、拉起 cc-switch-proxy、等待 /health 就绪、快照 env 键、校验当前供应商并写入档位别名、恢复 env 键、终止进程组、删除状态文件；六个失败分支分别退出。">
+           aria-label="本地路由生命周期流程图：读取配置、读状态文件、拉起 cc-switch-proxy、等待 /health 就绪、快照 env 键、校验当前供应商并指向网关（写占位凭据）、恢复 env 键、终止进程组、删除状态文件；六个失败分支分别退出。">
         <defs>
           <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5"
                   markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -490,7 +490,7 @@
         <!-- 6 -->
         <rect class="node" x="40" y="592" width="318" height="52" rx="3" />
         <text class="num" x="62" y="623">06</text>
-        <text class="node-label" x="96" y="623">校验供应商 · 备份 · 写入别名</text>
+        <text class="node-label" x="96" y="623">校验供应商 · 备份 · 指向网关</text>
 
         <line class="edge-dead" x1="358" y1="618" x2="444" y2="618" marker-end="url(#a2d)" />
         <rect class="node-dead" x="450" y="592" width="330" height="52" rx="3" />
@@ -564,8 +564,8 @@
     <h2>只动 9 个键，其余原样</h2>
     <p>
       快照记录的是「键在不在」+「原来是什么值」，所以还原是精确的：
-      原本没有的键不会被留下，原本有的值会被放回去。模型键写的是稳定档位别名
-      （<code>claude-sonnet-5</code> …），真实模型由代理按当前供应商映射。
+      原本没有的键不会被留下，原本有的值会被放回去。应用只写两个网络分派键
+      （网关地址 + 占位凭据），模型键由用户在 settings.json 里自己维护。
       非 <code>env</code> 字段（<code>theme</code>、<code>permissions</code>、<code>skills</code>…）
       从头到尾没进过作用域。
     </p>
@@ -609,7 +609,7 @@
       </li>
       <li>
         <span class="tag">供应商</span>
-        <p>上游地址、凭据、档位模型都存在 cc-switch 的 SQLite 库里，由配置页经
+        <p>上游地址、凭据、接入点节点都存在 cc-switch 的 SQLite 库里，由配置页经
           <code>cc-switch-proxy provider …</code> 增删改；开启路由前必须有一个「当前供应商」。</p>
       </li>
       <li>

@@ -11,10 +11,13 @@ What is covered:
 * provider CRUD through the real ``provider`` CLI subcommands
 * the global outbound-proxy setting through the real ``proxy`` subcommands
 * the Anthropic ⇄ OpenAI protocol relay (the "转接口" path)
-* the stable tier aliases (``claude-sonnet-5`` …) mapping to the upstream's
-  real model names
+* per-model routing (``--model-nodes`` / ``--model-routes``): a routed model
+  must honor its node's URL/format, and a format-only route must switch the
+  wire protocol on live traffic
 * the full dd-switch lifecycle: ``route_start`` → ``route_apply`` → traffic →
   ``route_stop`` restoring the original ``~/.claude/settings.json``
+  (apply writes only the gateway Base URL + placeholder token — model names
+  stay the user's own)
 
 The endpoint is read from ``test_data/.testdata``::
 
@@ -497,10 +500,11 @@ class ProtocolRelayTests(ProxyTestCase):
 class DdSwitchLifecycleTests(ProxyTestCase):
     """The full dd-switch flow: start → apply → traffic → stop."""
 
-    def test_apply_writes_the_gateway_and_aliases(self):
+    def test_apply_writes_the_gateway_pointing_only(self):
         self.add_provider()
         self.settings.write_text(
-            json.dumps({"env": {"ANTHROPIC_AUTH_TOKEN": "orig", "FOO": "bar"},
+            json.dumps({"env": {"ANTHROPIC_AUTH_TOKEN": "orig", "FOO": "bar",
+                                "ANTHROPIC_DEFAULT_SONNET_MODEL": "user-own-model"},
                         "theme": "dark"}),
             encoding="utf-8",
         )
@@ -511,9 +515,10 @@ class DdSwitchLifecycleTests(ProxyTestCase):
         env = data["env"]
         self.assertEqual(env["ANTHROPIC_BASE_URL"], self.base_url)
         self.assertEqual(env["ANTHROPIC_AUTH_TOKEN"], app.ROUTE_TOKEN_PLACEHOLDER)
-        self.assertEqual(env["ANTHROPIC_DEFAULT_SONNET_MODEL"], app.ROUTE_ALIASES["sonnet"])
-        self.assertEqual(env["ANTHROPIC_DEFAULT_HAIKU_MODEL"], app.ROUTE_ALIASES["haiku"])
-        self.assertEqual(env["ANTHROPIC_DEFAULT_OPUS_MODEL"], app.ROUTE_ALIASES["opus"])
+        # Model names belong to the user now — untouched by apply, no aliases.
+        self.assertEqual(env["ANTHROPIC_DEFAULT_SONNET_MODEL"], "user-own-model")
+        self.assertNotIn("ANTHROPIC_DEFAULT_HAIKU_MODEL", env)
+        self.assertNotIn("ANTHROPIC_DEFAULT_OPUS_MODEL", env)
         # Untouched by routing.
         self.assertEqual(env["FOO"], "bar")
         self.assertEqual(data["theme"], "dark")
@@ -576,6 +581,139 @@ class DdSwitchLifecycleTests(ProxyTestCase):
 
         backups = list(self.root.glob("settings.json.bak.*"))
         self.assertTrue(backups, "apply should back up settings.json first")
+
+
+class PerModelRouteTests(ProxyTestCase):
+    """Mixed-type provider: per-model nodes / API shapes drive the upstream.
+
+    Single-type providers behave exactly like before (one shape for every
+    request). These tests prove the per-model decisions with real traffic:
+
+    * a model routed to a node with a dead URL must fail, and switching that
+      model to a node-less route (default access point) must recover it; and
+    * a model routed to a node with a per-model format must hit the upstream
+      path that format demands (`/v1/responses` vs `/v1/chat/completions`),
+      verified against a localhost sink that records the request the proxy
+      sends (the live upstream cannot discriminate: both formats convert
+      back into an Anthropic `type:"message"`, and both were observed live).
+    """
+
+    def _single_request(self, model):
+        """One request without the retry wrapper — errors stay observable."""
+        try:
+            return self._anthropic_request_once(model)
+        except urllib.error.HTTPError as exc:
+            return exc.read().decode("utf-8", "replace"), f"error-{exc.code}"
+        except Exception as exc:  # noqa: BLE001 - the payload is asserted below
+            return json.dumps({"error": str(exc)}), "error"
+
+    def _parsed(self, raw):
+        try:
+            return json.loads(raw)
+        except ValueError:
+            return None
+
+    def test_a_routed_model_diverts_to_its_node_url_and_recovers(self):
+        self.add_provider(set_current=True)
+        app.route_provider_save({
+            "id": "opencodego",
+            "name": "OpenCodeGo",
+            # 独立接入点节点：一个必死的 URL（端口 1 无监听）
+            "model_nodes": [{"name": "nowhere", "url": "https://127.0.0.1:1"}],
+            "model_routes": {
+                TESTDATA["model_name"]: {"node": "nowhere", "format": "openai_chat"},
+            },
+        })
+        self.start_route()
+
+        # 命中分流表的模型被指到死节点——必须失败，不得回落默认接入点。
+        raw, _ = self._single_request(TESTDATA["model_name"])
+        parsed = self._parsed(raw)
+        self.assertTrue(parsed is None or parsed.get("type") != "message",
+                        f"per-model node dispatch ignored: {raw[:200]}")
+
+        # 把该模型改成不带 node 的路由（format-only）——回落默认接入点后恢复。
+        app.route_provider_save({
+            "id": "opencodego",
+            "name": "OpenCodeGo",
+            "model_routes": {
+                TESTDATA["model_name"]: {"format": "openai_chat"},
+            },
+        })
+        raw, _ = self.anthropic_request(model=TESTDATA["model_name"], text="Say pong")
+        body = self._parsed(raw)
+        self.assertTrue(body and body.get("type") == "message",
+                        f"format-only route broke the default node: {raw[:200]}")
+
+    def test_a_routed_model_hits_the_upstream_path_its_format_demands(self):
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        hits = []
+
+        class SinkHandler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                body = self.rfile.read(length)
+                hits.append({"path": self.path,
+                             "body": json.loads(body.decode("utf-8"))})
+                if self.path.endswith("/responses"):
+                    payload = {"id": "resp_sink", "object": "response",
+                               "status": "completed", "model": "sink",
+                               "output": [{"type": "message", "role": "assistant",
+                                           "content": [{"type": "output_text",
+                                                        "text": "pong"}]}],
+                               "usage": {"input_tokens": 1, "output_tokens": 1}}
+                else:  # /v1/chat/completions
+                    payload = {"id": "chat_sink", "object": "chat.completion",
+                               "model": "sink",
+                               "choices": [{"index": 0, "finish_reason": "stop",
+                                            "message": {"role": "assistant",
+                                                        "content": "pong"}}],
+                               "usage": {"prompt_tokens": 1, "completion_tokens": 1}}
+                data = json.dumps(payload).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *args):  # 调试用打印全部忽略
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), SinkHandler)
+        port = server.server_address[1]
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+
+        self.add_provider(set_current=True)
+        self.start_route()
+
+        # 节点同时提供独立接入点与每模型 format：请求必须打到该 format
+        # 期望的上游路径，且响应被转换回 Anthropic message（响应侧的
+        # 格式决策同样跟模型走）。
+        for fmt, expected_path, expected_body_key in (
+            ("openai_responses", "/v1/responses", "input"),
+            ("openai_chat", "/v1/chat/completions", "messages"),
+        ):
+            hits.clear()
+            app.route_provider_save({
+                "id": "opencodego",
+                "name": "OpenCodeGo",
+                "model_nodes": [{"name": "sink", "url": f"http://127.0.0.1:{port}"}],
+                "model_routes": {TESTDATA["model_name"]: {"node": "sink", "format": fmt}},
+            })
+            raw, _ = self._single_request(TESTDATA["model_name"])
+            body = self._parsed(raw)
+            self.assertTrue(hits, f"{fmt}: the request never reached the sink: {raw[:200]}")
+            self.assertTrue(hits[0]["path"].endswith(expected_path),
+                            f"{fmt}: wrong upstream path {hits[0]['path']} (body keys "
+                            f"{sorted(hits[0]['body'])})")
+            self.assertIn(expected_body_key, hits[0]["body"],
+                          f"{fmt}: request body was not {expected_body_key}-shaped")
+            self.assertTrue(body and body.get("type") == "message",
+                            f"{fmt}: upstream reply was not converted back into an "
+                            f"Anthropic message: {raw[:200]}")
 
 
 if __name__ == "__main__":

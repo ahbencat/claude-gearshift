@@ -158,6 +158,31 @@ rejected. `update` without the flag keeps the stored value. A top-level
 path). `list` reports it as `apiFormat` (absent on rows written by older
 binaries).
 
+**Per-model transport (`--model-nodes` / `--model-routes`)** — for upstreams
+that expose more than one API shape (opencode-style: `/v1/messages` and
+`/v1/responses` both live). Both flags take JSON and are stored inside the
+provider's `settings_config` alongside `env`; an empty string clears the table;
+`update` without the flags keeps the stored ones:
+
+```bash
+cc-switch-proxy provider update --id relay \
+  --model-nodes '[{"name":"a","url":"https://a.example","key":"sk-a"},{"name":"b","key":"sk-b"}]' \
+  --model-routes '{"mimo-v2.6":{"node":"a","format":"openai_chat"},"deepseek-v4":{"format":"openai_responses"}}'
+```
+
+- `modelNodes` — `{name, url?, key?}`; `url`+`key` = an independent access
+  point, key-only = a multi-key supplement; omitted fields fall back to the
+  provider default (`env.ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`).
+- `modelRoutes` — `{model: {node?, format?}}`; at least one of the two per row;
+  `format` shares the `--api-format` value domain; a model key must NOT carry
+  the `[1m]` suffix (the proxy strips it before matching).
+- The forwarder consults the tables per request: a matching model routes to its
+  node's URL/key and API shape; misses use the provider default. `list` returns
+  both tables inside `settingsConfig` (dd-switch masks node keys as `***`).
+- `update` preserves unknown top-level keys of the existing
+  `settings_config` (only `env` is rebuilt), so tables and legacy fields
+  survive partial updates.
+
 ### Global outbound proxy subcommand
 
 Local routing is only worth running for two reasons: **① protocol relay**

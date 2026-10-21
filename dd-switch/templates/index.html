@@ -54,6 +54,12 @@
   }
   .config-item .actions button:hover { background: rgba(255,255,255,.08); }
   .config-item .actions .btn-del:hover { color: var(--danger); }
+  /* 供应商编辑器内的输入行（节点/模型路由表格与表单共用） */
+  .pe-input {
+    width: 100%; padding: 6px 10px; border-radius: var(--radius);
+    border: 1px solid var(--border); background: #13142a; color: var(--text);
+    font-size: 13px; box-sizing: border-box; margin-bottom: 0;
+  }
   .main {
     flex: 1; display: flex; flex-direction: column; padding: 24px; gap: 16px;
     overflow-y: auto; min-width: 0;
@@ -207,6 +213,13 @@
         <span class="name">📍 <span data-i18n="sidebarCurrentConfig">当前配置</span></span>
       </div>
     </div>
+    <div id="routeSidebar" style="display:none;padding:8px 0;border-bottom:1px solid var(--border)">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:0 8px 4px">
+        <span style="font-size:12px;font-weight:600;color:var(--muted)" data-i18n="sidebarRouteBlock">本地路由</span>
+        <button class="btn btn-sm" onclick="openNewProvider()" data-i18n-title="routeAddProvider" title="添加供应商">＋</button>
+      </div>
+      <div id="routeSidebarList" style="padding:0 4px"></div>
+    </div>
     <div class="config-list" id="configList">
       <div class="empty" data-i18n="loading">加载中...</div>
     </div>
@@ -259,10 +272,9 @@
           <input type="file" id="routeImportFiles" multiple accept=".json,application/json" style="display:none" onchange="routeImport(this)" />
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-          <strong style="font-size:13px" data-i18n="routeProviders">供应商</strong>
-          <button class="btn btn-sm" onclick="openProviderForm()" data-i18n="routeAddProvider">＋ 添加供应商</button>
+          <strong style="font-size:13px" data-i18n="routeProvidersHint">供应商在左栏「本地路由」区块里管理（点击进入编辑）</strong>
+          <button class="btn btn-sm" onclick="openNewProvider()" data-i18n="routeAddProvider">＋ 添加供应商</button>
         </div>
-        <div id="routeProviderList" style="font-size:13px"></div>
 
         <div style="display:flex;justify-content:space-between;align-items:center;margin:12px 0 6px">
           <strong style="font-size:13px" data-i18n="routeProxyTitle">出站代理</strong>
@@ -274,6 +286,94 @@
           <button class="btn btn-sm" id="btnRouteProxyClear" onclick="routeProxyClear()" data-i18n="routeProxyClear">清除</button>
         </div>
         <div id="routeProxyHint" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
+      </div>
+
+      <!-- 供应商编辑器：左栏点选供应商后在此显示（与 routeCard 互斥） -->
+      <div class="preview-area" id="providerEditor" style="display:none">
+        <div class="toolbar">
+          <span class="file-name" id="peTitle" style="display:flex;align-items:center;gap:8px">
+            <span data-i18n="routeAddProvider">添加供应商</span>
+          </span>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-sm" onclick="backToRoute()" data-i18n="routeEditorBack">↩ 返回</button>
+            <button class="btn btn-sm btn-success" onclick="saveProvider()" data-i18n="save">💾 保存</button>
+            <button class="btn btn-sm" id="peSetCurrent" onclick="setCurrentAndReload()" data-i18n="routeSetCurrent" style="display:none">★ 设为当前</button>
+            <button class="btn btn-sm btn-danger" id="peDelete" onclick="deleteSelectedProvider()" data-i18n="routeDelete" style="display:none">🗑 删除</button>
+          </div>
+        </div>
+        <div style="padding:14px;font-size:13px;display:flex;flex-direction:column;gap:12px;overflow-y:auto">
+          <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+            <div style="flex:2;min-width:200px">
+              <div data-i18n="routeName">名称</div>
+              <input type="text" id="peName" placeholder="名称" style="margin-top:4px" class="pe-input" />
+            </div>
+            <div style="flex:1;min-width:180px">
+              <div data-i18n="routeTypeLabel">供应商类型</div>
+              <select id="peType" onchange="peTypeChanged()" style="margin-top:4px" class="pe-input">
+                <option value="single" data-i18n="routeTypeSingle">单类型</option>
+                <option value="mixed" data-i18n="routeTypeMixed">混合类型</option>
+              </select>
+            </div>
+          </div>
+          <div id="peTypeHint" style="font-size:12px;color:var(--muted)"></div>
+
+          <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+            <div style="flex:2;min-width:240px">
+              <div data-i18n="routeDefaultPoint">默认接入点（Base URL）</div>
+              <input type="text" id="peBaseUrl" placeholder="https://…" style="margin-top:4px" class="pe-input" />
+            </div>
+            <div style="flex:1;min-width:160px">
+              <div data-i18n="routeDefaultToken">默认 Key</div>
+              <input type="password" id="peToken" data-i18n-placeholder="routeTokenHint" placeholder="留空表示不修改" style="margin-top:4px" class="pe-input" />
+            </div>
+            <div style="flex:1;min-width:180px">
+              <div data-i18n="routeApiFormat">上游协议（表外模型的兜底）</div>
+              <select id="peApiFormat" style="margin-top:4px" class="pe-input">
+                <option value="anthropic" data-i18n="routeApiFormatAnthropic">anthropic（默认，原样透传）</option>
+                <option value="openai_chat" data-i18n="routeApiFormatOpenAIChat">openai_chat（OpenAI 对话接口）</option>
+                <option value="openai_responses" data-i18n="routeApiFormatOpenAIResponses">openai_responses（OpenAI Responses）</option>
+                <option value="gemini_native" data-i18n="routeApiFormatGemini">gemini_native（Gemini 原生）</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- 混合类型：节点 + 每模型路由 -->
+          <div id="peMixed">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+              <strong data-i18n="routeNodeTableTitle">节点（接入点 / Key）</strong>
+              <button class="btn btn-sm" onclick="peAddNode()" data-i18n="routeAddNode">＋ 节点</button>
+            </div>
+            <table style="width:100%;font-size:13px;border-collapse:collapse">
+              <thead><tr style="color:var(--muted)">
+                <th style="text-align:left;padding:2px 6px 6px 0;width:24%" data-i18n="routeNodeName">节点名</th>
+                <th style="text-align:left;padding:2px 6px 6px 0" data-i18n="routeNodeUrl">接入点 URL（可留空 = 用默认）</th>
+                <th style="text-align:left;padding:2px 6px 6px 0;width:30%" data-i18n="routeNodeKey">Key（留空 = 保持原值）</th>
+                <th style="width:34px"></th>
+              </tr></thead>
+              <tbody id="peNodeRows"></tbody>
+            </table>
+            <div id="peNodeEmpty" class="empty" data-i18n="routeNoNodesHint">还没有节点：不配节点时全部请求走默认接入点，表格只用来切协议/换 Key。</div>
+
+            <div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 4px">
+              <strong data-i18n="routeRouteTableTitle">模型路由</strong>
+              <button class="btn btn-sm" onclick="peAddRoute()" data-i18n="routeAddRoute">＋ 模型</button>
+            </div>
+            <table style="width:100%;font-size:13px;border-collapse:collapse">
+              <thead><tr style="color:var(--muted)">
+                <th style="text-align:left;padding:2px 6px 6px 0;width:36%" data-i18n="routeRouteModel">模型名（真实上游名，不带 [1m] 后缀）</th>
+                <th style="text-align:left;padding:2px 6px 6px 0;width:34%" data-i18n="routeRouteNode">节点</th>
+                <th style="text-align:left;padding:2px 6px 6px 0" data-i18n="routeRouteFormat">接口形态</th>
+                <th style="width:34px"></th>
+              </tr></thead>
+              <tbody id="peRouteRows"></tbody>
+            </table>
+            <div id="peRouteEmpty" class="empty" data-i18n="routeNoRoutesHint">没有按模型的路由：所有请求走上面的默认接入点与协议。</div>
+          </div>
+
+          <div style="font-size:12px;color:var(--muted);border-top:1px solid var(--border);padding-top:10px">
+            📌 <span data-i18n="routeModelHint">模型名由你在 Claude Code 的 settings.json 里自己写（如 "ANTHROPIC_DEFAULT_OPUS_MODEL": "hy4-preview[1M]"）；上面表格的键填剥掉 [1m] 后缀的名字。</span>
+          </div>
+        </div>
       </div>
 
       <details class="route-manual" id="routeManual" open>
@@ -289,9 +389,9 @@
         <ul>
           <li data-i18n="routeManualStep1">① 添加或导入供应商：点「添加供应商」手工填写，或「从本机导入」选择浏览设备上的配置文件；选一个作为当前供应商。</li>
           <li data-i18n="routeManualStep2">② 开启路由：dd-switch 拉起本机 cc-switch-proxy 进程（仅回环 127.0.0.1:9301，普通子进程，不是服务）。</li>
-          <li data-i18n="routeManualStep3">③ 应用到 Claude Code：把 ANTHROPIC_BASE_URL 指向网关并写入稳定档位别名，重启 Claude Code 之后生效。</li>
+          <li data-i18n="routeManualStep3">③ 应用到 Claude Code：把 ANTHROPIC_BASE_URL 指向网关并写入占位凭据 PROXY_MANAGED，重启 Claude Code 之后生效；模型名（ANTHROPIC_DEFAULT_*_MODEL 等）由你自己在 settings.json 里写真实上游名。</li>
         </ul>
-        <p data-i18n="routeManualTiers">档位模型按供应商分别填写（Haiku / Sonnet / Opus）；应用后客户端只看到 claude-sonnet-5 等稳定别名，由代理映射成当前供应商的真实模型名。</p>
+        <p data-i18n="routeManualTiers">模型名由用户负责：在 Claude Code 的 settings.json 里写真实上游模型名（如 "ANTHROPIC_DEFAULT_OPUS_MODEL": "hy4-preview[1M]"），面板只指向网关，不再代写档位别名。请求里的模型名若命中该供应商的模型路由表，就按表走对应节点与接口形态；未命中走默认接入点与协议。</p>
         <p><strong data-i18n="routeManualNotesTitle">注意</strong></p>
         <ul>
           <li data-i18n="routeManualNoteLocal">仅服务本机（127.0.0.1）；通过 SSH 管理的远程服务器不参与路由。</li>
@@ -354,41 +454,6 @@
   </div>
 </div>
 
-<!-- provider modal (local routing) -->
-<div class="modal-overlay" id="providerModal">
-  <div class="modal" style="max-width:640px">
-    <h3 id="providerModalTitle" data-i18n="routeAddProvider">添加供应商</h3>
-    <input type="hidden" id="rpId" />
-    <input type="text" id="rpName" data-i18n-placeholder="routeName" placeholder="名称" style="width:100%;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px;margin-bottom:8px" />
-    <input type="text" id="rpBaseUrl" placeholder="Base URL（https://…）" style="width:100%;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px;margin-bottom:8px" />
-    <input type="password" id="rpToken" data-i18n-placeholder="routeTokenHint" placeholder="凭据 Token（留空表示不修改）" style="width:100%;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px;margin-bottom:8px" />
-    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:8px">
-      <span data-i18n="routeApiFormat">上游协议</span>
-      <select id="rpApiFormat" style="flex:1;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px">
-        <option value="anthropic" data-i18n="routeApiFormatAnthropic">anthropic（默认，原样透传）</option>
-        <option value="openai_chat" data-i18n="routeApiFormatOpenAIChat">openai_chat（OpenAI 对话接口）</option>
-        <option value="openai_responses" data-i18n="routeApiFormatOpenAIResponses">openai_responses（OpenAI Responses）</option>
-        <option value="gemini_native" data-i18n="routeApiFormatGemini">gemini_native（Gemini 原生）</option>
-      </select>
-    </label>
-    <div style="display:flex;gap:8px;margin-bottom:8px">
-      <input type="text" id="rpModel" placeholder="默认 Model" style="flex:1;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px" />
-      <input type="text" id="rpHaiKu" placeholder="Haiku 档" style="flex:1;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px" />
-    </div>
-    <div style="display:flex;gap:8px;margin-bottom:8px">
-      <input type="text" id="rpSonnet" placeholder="Sonnet 档" style="flex:1;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px" />
-      <input type="text" id="rpOpus" placeholder="Opus 档" style="flex:1;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:#13142a;color:var(--text);font-size:13px" />
-    </div>
-    <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin-bottom:12px">
-      <input type="checkbox" id="rpSetCurrent" /> <span data-i18n="routeSetCurrent">设为当前供应商</span>
-    </label>
-    <div class="btns">
-      <button class="btn" onclick="closeProviderForm()" data-i18n="cancel">取消</button>
-      <button class="btn btn-primary" onclick="saveProvider()" data-i18n="save">保存</button>
-    </div>
-  </div>
-</div>
-
 <!-- toast -->
 <div class="toast" id="toast"></div>
 
@@ -399,6 +464,11 @@ let currentName = null; // 左侧选中态：正在查看/编辑的文件（单�
 let liveProfileName = null; // 线上生效的配置档：只决定 ⬅️ 标记，不参与选中
 let editing = false;
 let isDirty = false;
+
+// 左侧选中态统一成一项：null = 当前配置视图；否则
+// {kind:'file', name} | {kind:'provider', id, isNew}——配置档与本地路由供应商
+// 并存于左栏，但点选互斥（同一时刻只高亮/显示一个）。
+let selectedItem = null;
 
 // Re-render dynamic content after a language switch / 切换语言后重绘动态内容
 function onLangChange() {
@@ -451,24 +521,48 @@ function setActiveTab(name) {
 function syncRouteTab(isLocal) {
   routeTabAvailable = isLocal;
   document.getElementById("tabRoute").disabled = !isLocal;
-  if (!isLocal) setActiveTab("config");
+  document.getElementById("routeSidebar").style.display = isLocal ? "block" : "none";
+  if (!isLocal) {
+    // 路由不可用（远程服务器 / 面板缺失）时不保留供应商选中态
+    if (selectedItem && selectedItem.kind === "provider") selectedItem = null;
+    setActiveTab("config");
+    renderConfigView();
+  } else {
+    renderRouteSidebar();
+  }
   renderRouteEntry();
 }
 
-// “当前配置”页是单视图：默认显示线上当前配置；点左侧文件则只显示该文件
-//（页签名字同步换成文件名），两者不叠加。
-let viewedFile = null; // null = 当前配置视图，否则为正在查看的文件名
-
+// 左栏单视图：“当前配置”默认展示；点文件则只显示该文件（页签换成文件名）；
+// 点左栏「本地路由」里的供应商则显示供应商编辑器（页签换成供应商名）。
+// 三者互不叠加，同一时刻只显示一个。
 function renderConfigView() {
-  const isFile = viewedFile !== null;
+  const kind = selectedItem ? selectedItem.kind : null;
+  const isFile = kind === "file";
+  const isProvider = kind === "provider";
   document.getElementById("currentCard").style.display = isFile ? "none" : "block";
   document.getElementById("fileView").style.display = isFile ? "flex" : "none";
-  document.getElementById("tabConfig").textContent = isFile ? viewedFile : t("tabCurrentConfig");
+  document.getElementById("tabConfig").textContent = isFile ? selectedItem.name : t("tabCurrentConfig");
   document.getElementById("currentConfigEntry").classList.toggle("active", !isFile);
+  document.getElementById("routeCard").style.display = isProvider ? "none" : "block";
+  document.getElementById("providerEditor").style.display = isProvider ? "flex" : "none";
+  document.getElementById("routeManual").style.display = isProvider ? "none" : "block";
+  document.getElementById("tabRoute").textContent = isProvider
+    ? (selectedItem.isNew ? t("routeAddProvider") : epName(selectedItem))
+    : t("tabLocalRouting");
+  if (activeTab !== "route") return;
+  if (isProvider) renderProviderEditor();
+  renderRouteSidebar();
+}
+
+function epName(item) {
+  if (item.isNew) return t("routeAddProvider");
+  const p = routeProviders.find((x) => x.id === item.id);
+  return (p && p.name) || t("routeEditProvider");
 }
 
 async function showCurrentConfig() {
-  viewedFile = null;
+  selectedItem = null;
   currentName = null; // 左侧单选：回到当前配置时清除文件选中态
   renderSidebar();
   renderConfigView();
@@ -512,9 +606,17 @@ async function loadRoute() {
     ]);
     syncRouteTab(true);
     renderRoute(status);
-    renderProviders(providers);
+    routeProviders = providers.providers || [];
+    routeCurrent = providers.current || null;
+    // 正在编辑的供应商被删掉时退回路由卡片
+    if (selectedItem && selectedItem.kind === "provider" && !selectedItem.isNew
+        && !routeProviders.some((p) => p.id === selectedItem.id)) {
+      selectedItem = null;
+    }
+    renderConfigView();
   } catch (e) {
-    document.getElementById("routeCard").style.display = "none";
+    routeProviders = [];
+    routeCurrent = null;
     routeActive = false;
     routeApplied = false;
     syncRouteTab(false);
@@ -567,12 +669,11 @@ function routeProxyClear() {
 }
 
 function renderRoute(data) {
-  const card = document.getElementById("routeCard");
+  // 卡片可见性由 renderConfigView 统一控制；这里只负责内容
   const line = document.getElementById("routeStatusLine");
   const btnStart = document.getElementById("btnRouteStart");
   const btnStop = document.getElementById("btnRouteStop");
   const btnApply = document.getElementById("btnRouteApply");
-  card.style.display = "block";
 
   if (!data.supported) {
     const missing = (data.missing || []).join(", ");
@@ -603,91 +704,229 @@ function renderRoute(data) {
   btnApply.style.display = "inline-block";
 }
 
-function renderProviders(data) {
-  routeProviders = data.providers || [];
-  routeCurrent = data.current || null;
-  const el = document.getElementById("routeProviderList");
-  if (!routeProviders.length) {
-    el.innerHTML = `<div class="empty">${t("routeNoProviders")}</div>`;
-    return;
+// --- 供应商编辑器（左栏「本地路由」点选后进主区编辑） ---
+let ep = null; // 编辑器工作副本：结构放在 ep 里，值为恰好渲染进 DOM，提交/重绘前先收集回来
+
+function providerWorkingCopy(id, isNew) {
+  const p = isNew ? null : routeProviders.find((x) => x.id === id);
+  const config = (p && p.settingsConfig) || {};
+  const env = config.env || {};
+  const nodes = (Array.isArray(config.modelNodes) ? config.modelNodes : []).map((n) => ({
+    name: (n && n.name) || "", url: (n && n.url) || "", key: "",
+    storedKey: (n && n.key) || "", // key 输入框不显示原有值，留空 = 提交时保持
+  }));
+  const routes = [];
+  const routeSrc = config.modelRoutes || {};
+  for (const [model, r] of Object.entries(routeSrc)) {
+    routes.push({ model, node: (r && r.node) || "", format: (r && r.format) || "" });
   }
-  let html = "";
-  for (const p of routeProviders) {
-    const env = (p.settingsConfig && p.settingsConfig.env) || {};
-    const isCurrent = p.id === routeCurrent;
-    // 协议只在有意义时展示：老 binary 无该字段、anthropic 为缺省行为，都不打扰
-    const fmt = (p.apiFormat && p.apiFormat !== "anthropic") ? ` · ${esc(p.apiFormat)}` : "";
-    html += `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">
-      <span class="server-badge ${isCurrent ? "" : "local"}">${isCurrent ? t("routeCurrent") : t("routeNotCurrent")}</span>
-      <div style="flex:1;min-width:0">
-        <div style="font-weight:500">${esc(p.name)}</div>
-        <div style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(env.ANTHROPIC_BASE_URL || "")}${fmt}</div>
-      </div>
-      <button class="btn btn-sm" onclick="setCurrentProvider('${esc(p.id)}')"${isCurrent ? " disabled" : ""}>${t("routeUse")}</button>
-      <button class="btn btn-sm" onclick="editProvider('${esc(p.id)}')">${t("routeEdit")}</button>
-      <button class="btn btn-sm btn-danger" onclick="deleteProvider('${esc(p.id)}')">${t("routeDelete")}</button>
-    </div>`;
+  const hadTables = nodes.length > 0 || routes.length > 0;
+  return {
+    id: id || null, isNew: !!isNew, _rendered: false,
+    name: p ? p.name : "", storedName: p ? p.name : "",
+    baseUrl: env.ANTHROPIC_BASE_URL || "", apiFormat: (p && p.apiFormat) || "anthropic",
+    hadTables, type: hadTables ? "mixed" : "single", nodes, routes,
+  };
+}
+
+function selectProvider(id) {
+  selectedItem = { kind: "provider", id, isNew: false };
+  ep = providerWorkingCopy(id, false);
+  if (activeTab !== "route") setActiveTab("route");
+  renderConfigView();
+}
+
+function openNewProvider() {
+  selectedItem = { kind: "provider", id: null, isNew: true };
+  ep = providerWorkingCopy(null, true);
+  if (activeTab !== "route") setActiveTab("route");
+  renderConfigView();
+}
+
+function backToRoute() {
+  selectedItem = null; ep = null;
+  renderConfigView();
+}
+
+// 重绘前把 DOM 里未提交的输入收回 ep（表格行是重建出来的，不收会丢）
+function peCollectFromDom() {
+  if (!ep || !ep._rendered) return;
+  ep.name = document.getElementById("peName").value;
+  ep.baseUrl = document.getElementById("peBaseUrl").value.trim();
+  ep.apiFormat = document.getElementById("peApiFormat").value;
+  document.querySelectorAll("#peNodeRows tr").forEach((tr) => {
+    const n = ep.nodes[Number(tr.dataset.i)];
+    if (!n) return;
+    n.name = tr.querySelector(".pe-n-name").value.trim();
+    n.url = tr.querySelector(".pe-n-url").value.trim();
+    n.key = tr.querySelector(".pe-n-key").value;
+  });
+  document.querySelectorAll("#peRouteRows tr").forEach((tr) => {
+    const r = ep.routes[Number(tr.dataset.i)];
+    if (!r) return;
+    r.model = tr.querySelector(".pe-r-model").value.trim();
+    r.node = tr.querySelector(".pe-r-node").value;
+    r.format = tr.querySelector(".pe-r-format").value;
+  });
+}
+
+function renderProviderEditor() {
+  if (!selectedItem || selectedItem.kind !== "provider" || !ep) return;
+  peCollectFromDom();
+  ep._rendered = true;
+  document.getElementById("peTitle").textContent =
+    ep.isNew ? t("routeAddProvider") : (ep.name || ep.storedName || t("routeEditProvider"));
+  document.getElementById("peSetCurrent").style.display = ep.isNew ? "none" : "";
+  document.getElementById("peDelete").style.display = ep.isNew ? "none" : "";
+  document.getElementById("peName").value = ep.name;
+  document.getElementById("peType").value = ep.type;
+  document.getElementById("peTypeHint").textContent =
+    t(ep.type === "mixed" ? "routeTypeMixedHint" : "routeTypeSingleHint");
+  document.getElementById("peBaseUrl").value = ep.baseUrl;
+  document.getElementById("peToken").value = ""; // 留空表示不修改
+  document.getElementById("peApiFormat").value = ep.apiFormat;
+  const mixed = ep.type === "mixed";
+  document.getElementById("peMixed").style.display = mixed ? "block" : "none";
+  if (mixed) { renderPeNodeRows(); renderPeRouteRows(); }
+}
+
+function peTypeChanged() {
+  peCollectFromDom();
+  ep.type = document.getElementById("peType").value;
+  renderProviderEditor();
+}
+
+function peNodeRowHtml(n, i) {
+  const keyHint = n.storedKey
+    ? t("routeNodeKeyKeepPlaceholder") : t("routeNodeKeyPlaceholder");
+  return `<tr data-i="${i}">
+    <td style="padding:2px 6px 6px 0"><input class="pe-input pe-n-name" value="${esc(n.name)}" placeholder="${esc(t("routeNodeName"))}" /></td>
+    <td style="padding:2px 6px 6px 0"><input class="pe-input pe-n-url" value="${esc(n.url)}" placeholder="${esc(t("routeNodeUrlPlaceholder"))}" /></td>
+    <td style="padding:2px 6px 6px 0"><input type="password" class="pe-input pe-n-key" value="" placeholder="${esc(keyHint)}" /></td>
+    <td><button class="btn btn-sm btn-del" onclick="peRemoveNode(${i})">✕</button></td>
+  </tr>`;
+}
+
+function renderPeNodeRows() {
+  document.getElementById("peNodeRows").innerHTML =
+    ep.nodes.map(peNodeRowHtml).join("");
+  document.getElementById("peNodeEmpty").style.display = ep.nodes.length ? "none" : "block";
+}
+
+function renderPeRouteRowHtml(r, i) {
+  let nodeOptions = `<option value="">${esc(t("routeNodeFallback"))}</option>`;
+  for (const n of ep.nodes) {
+    if (n.name) nodeOptions += `<option value="${esc(n.name)}"${r.node === n.name ? " selected" : ""}>${esc(n.name)}</option>`;
   }
-  el.innerHTML = html;
+  if (r.node && !ep.nodes.some((n) => n.name === r.node)) {
+    nodeOptions += `<option value="${esc(r.node)}" selected>${esc(r.node)}（已删除）</option>`;
+  }
+  const fmtOptions = ["", "anthropic", "openai_chat", "openai_responses", "gemini_native"]
+    .map((f) => `<option value="${f}"${r.format === f ? " selected" : ""}>${f ? esc(f) : esc(t("routeFormatFallback"))}</option>`)
+    .join("");
+  return `<tr data-i="${i}">
+    <td style="padding:2px 6px 6px 0"><input class="pe-input pe-r-model" value="${esc(r.model)}" placeholder="hy4-preview" /></td>
+    <td style="padding:2px 6px 6px 0"><select class="pe-input pe-r-node">${nodeOptions}</select></td>
+    <td style="padding:2px 6px 6px 0"><select class="pe-input pe-r-format">${fmtOptions}</select></td>
+    <td><button class="btn btn-sm btn-del" onclick="peRemoveRoute(${i})">✕</button></td>
+  </tr>`;
 }
 
-function openProviderForm(provider) {
-  document.getElementById("providerModalTitle").textContent = provider ? t("routeEditProvider") : t("routeAddProvider");
-  document.getElementById("rpId").value = provider ? provider.id : "";
-  document.getElementById("rpName").value = provider ? provider.name : "";
-  const env = provider ? ((provider.settingsConfig || {}).env || {}) : {};
-  document.getElementById("rpBaseUrl").value = env.ANTHROPIC_BASE_URL || "";
-  document.getElementById("rpToken").value = "";
-  document.getElementById("rpModel").value = env.ANTHROPIC_MODEL || "";
-  document.getElementById("rpHaiKu").value = env.ANTHROPIC_DEFAULT_HAIKU_MODEL || "";
-  document.getElementById("rpSonnet").value = env.ANTHROPIC_DEFAULT_SONNET_MODEL || "";
-  document.getElementById("rpOpus").value = env.ANTHROPIC_DEFAULT_OPUS_MODEL || "";
-  document.getElementById("rpApiFormat").value = (provider && provider.apiFormat) || "anthropic";
-  document.getElementById("rpSetCurrent").checked = !provider;
-  document.getElementById("providerModal").classList.add("show");
+function renderPeRouteRows() {
+  document.getElementById("peRouteRows").innerHTML =
+    ep.routes.map(renderPeRouteRowHtml).join("");
+  document.getElementById("peRouteEmpty").style.display = ep.routes.length ? "none" : "block";
 }
 
-function closeProviderForm() {
-  document.getElementById("providerModal").classList.remove("show");
-}
-
-function editProvider(id) {
-  const p = routeProviders.find(x => x.id === id);
-  if (p) openProviderForm(p);
-}
+function peAddNode() { peCollectFromDom(); ep.nodes.push({ name: "", url: "", key: "", storedKey: "" }); renderPeNodeRows(); }
+function peRemoveNode(i) { peCollectFromDom(); ep.nodes.splice(i, 1); renderPeNodeRows(); }
+function peAddRoute() { peCollectFromDom(); ep.routes.push({ model: "", node: "", format: "" }); renderPeRouteRows(); }
+function peRemoveRoute(i) { peCollectFromDom(); ep.routes.splice(i, 1); renderPeRouteRows(); }
 
 async function saveProvider() {
+  peCollectFromDom();
   const body = {
-    id: document.getElementById("rpId").value || null,
-    name: document.getElementById("rpName").value.trim(),
-    base_url: document.getElementById("rpBaseUrl").value.trim(),
-    token: document.getElementById("rpToken").value.trim(),
-    model: document.getElementById("rpModel").value.trim(),
-    haiku: document.getElementById("rpHaiKu").value.trim(),
-    sonnet: document.getElementById("rpSonnet").value.trim(),
-    opus: document.getElementById("rpOpus").value.trim(),
-    api_format: document.getElementById("rpApiFormat").value,
-    set_current: document.getElementById("rpSetCurrent").checked,
+    id: ep.id, name: ep.name.trim(), base_url: ep.baseUrl, api_format: ep.apiFormat,
+    set_current: false,
   };
   if (!body.name) { toast(t("routeNameRequired"), "error"); return; }
+  const token = document.getElementById("peToken").value.trim();
+  if (token) body.token = token;
+  if (ep.type === "mixed") {
+    const names = new Set();
+    const nodes = [];
+    for (const n of ep.nodes) {
+      if (!n.name) { toast(t("routeNodeNameRequired"), "error"); return; }
+      if (names.has(n.name)) { toast(t("routeNodeNameDup"), "error"); return; }
+      names.add(n.name);
+      const node = { name: n.name };
+      if (n.url) node.url = n.url;
+      if (n.key && n.key.trim()) node.key = n.key.trim();
+      nodes.push(node);
+    }
+    const routes = {};
+    for (const r of ep.routes) {
+      if (!r.model) { toast(t("routeModelNameRequired"), "error"); return; }
+      if (r.model.toLowerCase().endsWith("[1m]")) { toast(t("routeModelSuffixForbidden"), "error"); return; }
+      if (!r.node && !r.format) { toast(t("routeRouteNeedsNodeOrFormat"), "error"); return; }
+      const entry = {};
+      if (r.node) entry.node = r.node;
+      if (r.format) entry.format = r.format;
+      routes[r.model] = entry;
+    }
+    body.model_nodes = nodes;
+    body.model_routes = routes;
+  } else if (ep.hadTables) {
+    // 保留原有默认接入点，清掉已存的混合型表格（后端空值=清表）
+    body.model_nodes = [];
+    body.model_routes = {};
+    ep.hadTables = false;
+  }
   try {
-    await api("POST", "api/route/providers", body);
+    const res = await api("POST", "api/route/providers", body);
     toast(t("routeProviderSaved"), "success");
-    closeProviderForm();
+    if (selectedItem && selectedItem.kind === "provider" && selectedItem.isNew) {
+      selectedItem.id = (res && res.id) || selectedItem.id;
+      selectedItem.isNew = false;
+    }
     await loadRoute();
   } catch (e) {
     toast(`❌ ${translateError(e.message)}`, "error");
   }
 }
 
-async function deleteProvider(id) {
-  if (!confirm(t("routeConfirmDelete"))) return;
+async function setCurrentAndReload() {
+  if (!ep || ep.isNew) return;
+  await setCurrentProvider(ep.id);
+}
+
+async function deleteSelectedProvider() {
+  if (!ep || ep.isNew) return;
+  const p = routeProviders.find((x) => x.id === ep.id);
+  if (!confirm(p ? `${t("routeConfirmDelete")}（${p.name}）` : t("routeConfirmDelete"))) return;
   try {
-    await api("POST", "api/route/providers/delete", { id });
-    await loadRoute();
+    await api("POST", "api/route/providers/delete", { id: ep.id });
+    await loadRoute(); // 载入会因所选供应商消失而自动退回路由卡片
   } catch (e) {
     toast(`❌ ${translateError(e.message)}`, "error");
   }
+}
+
+function renderRouteSidebar() {
+  const el = document.getElementById("routeSidebarList");
+  let html = "";
+  for (const p of routeProviders) {
+    const isCurrent = p.id === routeCurrent;
+    const selected = selectedItem && selectedItem.kind === "provider" && selectedItem.id === p.id;
+    html += `<div class="config-item${selected ? " active" : ""}" onclick="selectProvider('${esc(p.id)}')">
+      <span class="name">${esc(p.name)}${isCurrent ? " ⬅️" : ""}</span>
+      <span class="actions"></span>
+    </div>`;
+  }
+  if (!routeProviders.length) {
+    html = `<div class="empty" style="font-size:11px">${t("routeSidebarEmptyHint")}</div>`;
+  }
+  el.innerHTML = html;
 }
 
 async function setCurrentProvider(id) {
@@ -922,7 +1161,7 @@ function renderSidebar() {
 async function selectConfig(name) {
   currentName = name;
   editing = false; isDirty = false;
-  viewedFile = name;
+  selectedItem = { kind: "file", name };
   renderConfigView();
   try {
     const data = await api("GET", `api/configs/${name}`);
@@ -966,7 +1205,7 @@ async function doSwitch() {
       toast(t("switchedTo", switchingName), "success");
       closeModal();
       await loadCurrent();
-      viewedFile = null; // 切完直接看生效后的当前配置
+      selectedItem = null; // 切完直接看生效后的当前配置
       renderConfigView();
     } else {
       const content = JSON.parse(document.getElementById("editor").value);
@@ -1031,7 +1270,7 @@ async function deleteConfig(name) {
       document.getElementById("btnSwitch").style.display = "none";
       document.getElementById("btnSave").style.display = "none";
     }
-    if (viewedFile === name) viewedFile = null; // 正在看的文件被删了，回到当前配置视图
+    if (selectedItem && selectedItem.kind === "file" && selectedItem.name === name) selectedItem = null; // 正在看的文件被删了，回到当前配置视图
     renderConfigView();
     await loadConfigs();
   } catch (e) {
@@ -1099,7 +1338,7 @@ function onServerChange() {
   currentServer = document.getElementById("serverSelect").value;
   currentName = null; // 换服务器时清空上一台的选中/标记状态
   liveProfileName = null;
-  viewedFile = null;
+  selectedItem = null;
   renderConfigView();
   loadAll();
 }
@@ -1240,7 +1479,7 @@ async function doRemoteSwitch(serverName, configContent) {
     await api("POST", `api/servers/${serverName}/switch`, { content: configContent });
     toast("切换成功", "success");
     await loadRemoteCurrent(serverName);
-    viewedFile = null;
+    selectedItem = null;
     renderConfigView();
   } catch (e) {
     toast(translateError(e.message), "error");

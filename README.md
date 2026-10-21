@@ -95,8 +95,13 @@ SQLite database.
 > `dd-switch/test_suite/test_local_routing_e2e.py`
 > drives the **real** `cc-switch-proxy` binary against a **live** upstream
 > (`../../test_data/.testdata`): OpenAI-Chat protocol relay (non-streaming +
-> SSE streaming), tier-alias model mapping, provider CRUD and the
-> start → apply → traffic → stop lifecycle all pass. Prerequisites missing
+> SSE streaming), provider CRUD and the
+> start → apply → traffic → stop lifecycle all pass. Per-model routing is
+> verified live too — a model routed to a node with a dead URL fails instead
+> of falling back, recovers on a format-only route, and a routed model's
+> format selects the upstream path (`/v1/responses` vs `/v1/chat/completions`,
+> proven against a recording localhost sink). Apply writes only the two
+> dispatch keys — model names stay the user's own. Prerequisites missing
 > (no binary, no WebKitGTK runtime libs, no endpoint) ⇒ the suite skips.
 > Details in [`TEST-REPORT.md`](TEST-REPORT.md). A top-level `"api_format"` in
 > an imported file is likewise honored on `provider import`.
@@ -119,10 +124,39 @@ If you simply connect directly to an Anthropic-protocol provider and the
 network is fine, the ordinary switch flow is enough — no need for local
 routing.
 
+### The two provider types (access-point configs live in the sidebar's "Local routing" block)
+
+- **Single-type** — the upstream offers exactly **one** API shape (only
+  `/v1/messages`, or only `/v1/responses`). All it takes is a name + access
+  point (Base URL) + key + that one protocol; the relay converts Anthropic
+  requests into that shape.
+- **Mixed-type** — the upstream is opencode-like: several API shapes coexist
+  (`/v1/messages` and `/v1/responses` both live), and different models may need
+  different shapes — even different access points. The editor configures two
+  tables:
+  - **Nodes** `{name, url?, key?}` — a node with both url+key is an independent
+    access point; url-less node with only a key is the **multi-key supplement**
+    (same access point, per-model credentials); omitted fields fall back to the
+    default access point.
+  - **Model routes** `{model: {node, format}}` — which node and which API shape
+    each model uses; a `format`-only route just switches the wire protocol.
+
+**Model names belong to you**: the panel no longer writes tier aliases. Put the
+real upstream model names into Claude Code's `~/.claude/settings.json` yourself:
+
+```json
+{ "env": { "ANTHROPIC_DEFAULT_OPUS_MODEL": "hy4-preview[1M]" } }
+```
+
+A request's model name (after the `[1m]` suffix is stripped) is matched against
+the provider's model-route table; misses use the default access point and
+protocol. So table keys must be the **stripped** names (`hy4-preview`).
+
 **How it works**
 
-1. **Add providers** — the local-routing panel lists providers from
-   `~/.cc-switch/cc-switch.db`. Add/edit them there, or import `*.json` config
+1. **Add providers** — the sidebar's "Local routing" block lists providers from
+   `~/.cc-switch/cc-switch.db`. Click one to open the editor in the main area
+   (the two types above), or import `*.json` config
    files from the machine you browse from (e.g. a Windows box) via the file
    picker — the server's `config/` is not involved. Pick one as current. Switching providers
    later is one step — set another as current and the router picks it up on
@@ -131,10 +165,11 @@ routing.
    (loopback-only; a plain child process, not a service), waits for `/health`,
    and snapshots the managed `env` keys from `~/.claude/settings.json`.
 3. **Apply** — applies to the currently active config only (no other profile
-   is touched): writes `ANTHROPIC_BASE_URL=http://127.0.0.1:9301`, the
-   `PROXY_MANAGED` placeholder token, and the stable tier aliases
-   (`claude-sonnet-5` …). The proxy maps those aliases to the current provider's
-   real models (per-provider, from the provider's `env`). Everything else in
+   is touched): it writes only the two dispatch keys —
+   `ANTHROPIC_BASE_URL=http://127.0.0.1:9301` and the `PROXY_MANAGED`
+   placeholder token. Model names (`ANTHROPIC_MODEL` /
+   `ANTHROPIC_DEFAULT_*_MODEL`) are yours to write in settings.json; apply
+   never touches them. Everything else in
    `env` and every non-`env` field is left alone.
 4. **Stop routing** — the managed keys are restored from the snapshot, then the
    process group is terminated. A failed restore keeps the state so the

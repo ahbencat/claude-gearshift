@@ -266,16 +266,14 @@ ROUTE_APP = os.environ.get("DD_SWITCH_ROUTE_APP", "claude")
 ROUTE_START_TIMEOUT = 30  # 等待 /health 就绪的秒数
 ROUTE_STOP_TIMEOUT = 10   # SIGTERM 后等待进程退出的秒数
 
-# 代理契约里的稳定模型别名：客户端只看到这几个名字，真实模型由代理按供应商映射。
-ROUTE_ALIASES = {
-    "haiku": "claude-haiku-5-5",
-    "sonnet": "claude-sonnet-5",
-    "opus": "claude-opus-5",
-}
 # 代理不校验进来的凭据；Claude Code 需要一个非空 token，写占位符即可。
+# 模型名不再由本面板代管（ANTHROPIC_MODEL / ANTHROPIC_DEFAULT_*__MODEL）：用户
+# 自己往 settings.json 里写真实模型名，代理按 settings_config.modelRoutes 分流。
 ROUTE_TOKEN_PLACEHOLDER = "PROXY_MANAGED"
 
-# 本功能写入/恢复的 env 键；其余 env 与非 env 字段一概不动。
+# 本功能快照/恢复的 env 键；其余 env 与非 env 字段一概不动。
+# apply 只写前两个；模型名键（ANTHROPIC_MODEL / *_DEFAULT_*_MODEL）由用户自理，
+# 保留在快照里只是让开启前的既有值无论何时都能原样恢复。
 MANAGED_ENV_KEYS = [
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_AUTH_TOKEN",
@@ -469,10 +467,14 @@ def route_providers():
     """List providers (tokens masked) plus the current one."""
     data = _proxy_cli(["list"])
     for provider in data.get("providers", []):
-        env = (provider.get("settingsConfig") or {}).get("env") or {}
+        config = provider.get("settingsConfig") or {}
+        env = config.get("env") or {}
         for key in list(env):
             if _SECRET_ENV_RE.search(key) and env[key]:
                 env[key] = "***"
+        for node in config.get("modelNodes") or []:
+            if isinstance(node, dict) and node.get("key"):
+                node["key"] = "***"
     return data
 
 
@@ -487,10 +489,83 @@ def _strip_chat_suffix(url):
     return url
 
 
+# 每模型路由可用的接口形态；与代理内 get_claude_api_format 的取值域一致。
+MODEL_ROUTE_FORMATS = ("anthropic", "openai_chat", "openai_responses", "gemini_native")
+
+
+def _normalize_model_nodes(nodes, existing_nodes):
+    """Clean the node table; per-node keys merge over the stored values.
+
+    `key` absent/None → inherit the stored key of the same node name (the UI
+    leaves the field blank to keep it); `key` "" → explicit clear; a typed
+    string wins. Empty table clears entirely."""
+    if not isinstance(nodes, list):
+        raise RouteError("节点表必须是数组")
+    by_name = {
+        old.get("name"): old.get("key")
+        for old in (existing_nodes if isinstance(existing_nodes, list) else [])
+        if isinstance(old, dict) and isinstance(old.get("name"), str)
+    }
+    cleaned, seen = [], set()
+    for i, node in enumerate(nodes):
+        if not isinstance(node, dict):
+            raise RouteError(f"节点 {i} 格式不正确")
+        name = (node.get("name") or "").strip()
+        if not name:
+            raise RouteError(f"节点 {i} 缺少名称")
+        if name in seen:
+            raise RouteError(f"节点名重复: {name}")
+        seen.add(name)
+        cleaned_node = {"name": name}
+        url = _strip_chat_suffix(node.get("url"))
+        if url.strip():
+            cleaned_node["url"] = url.strip()
+        key = node.get("key")
+        if key is None:
+            if by_name.get(name):
+                cleaned_node["key"] = by_name[name]
+        elif isinstance(key, str) and key.strip():
+            cleaned_node["key"] = key.strip()
+        cleaned.append(cleaned_node)
+    return cleaned
+
+
+def _normalize_model_routes(routes):
+    """Clean the model-route table; every row's format must be whitelisted."""
+    if not isinstance(routes, dict):
+        raise RouteError("模型路由表必须是对象")
+    cleaned = {}
+    for raw_model, route in routes.items():
+        model = str(raw_model).strip()
+        if not model:
+            raise RouteError("模型路由存在空模型名")
+        if model.lower().endswith("[1m]"):
+            raise RouteError(f"模型键不要带 [1m] 后缀（引擎匹配前会剥掉）: {model}")
+        if not isinstance(route, dict):
+            raise RouteError(f"模型 {model} 的路由必须是对象")
+        node = (route.get("node") or "").strip()
+        fmt = (route.get("format") or "").strip()
+        if not node and not fmt:
+            raise RouteError(f"模型 {model} 至少要指定节点或接口形态")
+        if node:
+            cleaned[model] = {"node": node}
+        if fmt:
+            if fmt not in MODEL_ROUTE_FORMATS:
+                raise RouteError(f"模型 {model} 未知的接口形态: {fmt}")
+            cleaned.setdefault(model, {})["format"] = fmt
+    return cleaned
+
+
 def route_provider_save(payload):
-    """Add or update a provider. `id` present → update, else add."""
+    """Add or update a provider. `id` present → update, else add.
+
+    `model_nodes` / `model_routes` serialize to `--model-nodes` /
+    `--model-routes`; omitted → stored tables untouched; empty → cleared."""
     payload = dict(payload)
-    payload["base_url"] = _strip_chat_suffix(payload.get("base_url"))
+    if payload.get("base_url"):
+        # 只在真的给了 URL 时归一化/传递——否则别把它变成 --base-url ""
+        # （空串会被 CLI 当成清除 ANTHROPIC_BASE_URL，部分更新的 env 会丢掉它）。
+        payload["base_url"] = _strip_chat_suffix(payload.get("base_url"))
     args = ["update", "--id", payload["id"]] if payload.get("id") else ["add"]
     for flag, key in (
         ("name", "name"), ("base-url", "base_url"), ("token", "token"),
@@ -500,6 +575,20 @@ def route_provider_save(payload):
         value = payload.get(key)
         if value is not None:
             args += [f"--{flag}", str(value)]
+    if "model_nodes" in payload or "model_routes" in payload:
+        existing_nodes = []
+        if payload.get("id"):
+            for provider in _proxy_cli(["list"]).get("providers", []):
+                if provider.get("id") == payload["id"]:
+                    config = provider.get("settingsConfig") or {}
+                    existing_nodes = config.get("modelNodes") or []
+                    break
+        if "model_nodes" in payload:
+            nodes = _normalize_model_nodes(payload["model_nodes"], existing_nodes)
+            args += ["--model-nodes", json.dumps(nodes) if nodes else ""]
+        if "model_routes" in payload:
+            routes = _normalize_model_routes(payload["model_routes"])
+            args += ["--model-routes", json.dumps(routes) if routes else ""]
     if payload.get("set_current"):
         args += ["--set-current"]
     return _proxy_cli(args)
@@ -602,21 +691,15 @@ def _snapshot_managed_env(settings_env):
 
 
 def _apply_route_env(settings):
+    """Point Claude Code at the gateway; model names stay the user's own.
+
+    Draws only the two network-dispatch keys — ANTHROPIC_MODEL and
+    ANTHROPIC_DEFAULT_*_MODEL belong to the user in settings.json, and the
+    proxy routes by the model name in the request body through
+    settings_config.modelRoutes."""
     env = dict(settings.get("env") or {})
     env["ANTHROPIC_BASE_URL"] = route_base_url()
     env["ANTHROPIC_AUTH_TOKEN"] = ROUTE_TOKEN_PLACEHOLDER
-    env["ANTHROPIC_MODEL"] = ROUTE_ALIASES["sonnet"]
-    env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = ROUTE_ALIASES["haiku"]
-    env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = ROUTE_ALIASES["opus"]
-    env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = ROUTE_ALIASES["sonnet"]
-    # *_MODEL_NAME 只是显示用别名：原本有才更新，避免引入非本项目的约定。
-    for key, tier in (
-        ("ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME", "haiku"),
-        ("ANTHROPIC_DEFAULT_OPUS_MODEL_NAME", "opus"),
-        ("ANTHROPIC_DEFAULT_SONNET_MODEL_NAME", "sonnet"),
-    ):
-        if key in env:
-            env[key] = ROUTE_ALIASES[tier]
     settings["env"] = env
 
 
@@ -1016,6 +1099,11 @@ def api_route_provider_save():
     token = body.get("token")
     if isinstance(token, str) and token.strip():
         payload["token"] = token.strip()
+    # 每模型节点/路由表：key 缺省=不改，非空值交给 route_provider_save 校验
+    # （节点 key 缺省从存量同名节点继承，"" 显式清空——列表里是掩码，不能回写）。
+    for key in ("model_nodes", "model_routes"):
+        if key in body and body[key] is not None:
+            payload[key] = body[key]
     # 上游协议声明（meta.apiFormat 的唯一写入口）；空=不改，非法值直接 400。
     api_format = (body.get("api_format") or "").strip()
     if api_format:

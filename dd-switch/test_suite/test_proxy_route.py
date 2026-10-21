@@ -150,8 +150,16 @@ class StartTests(RouteTestCase):
 
 
 class ApplyTests(RouteTestCase):
-    def test_apply_writes_aliases_and_placeholder(self):
-        self.write_settings({"env": {"FOO": "bar"}, "theme": "dark"})
+    def test_apply_writes_gateway_pointing_only(self):
+        # 模型名归用户管：apply 只写两个网络分派键，用户自己写的模型键原样保留
+        self.write_settings({
+            "env": {
+                "FOO": "bar",
+                "ANTHROPIC_MODEL": "mimo-v2.6",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "hy4-preview[1M]",
+            },
+            "theme": "dark",
+        })
         app.route_start()
         app.route_apply()
 
@@ -159,9 +167,10 @@ class ApplyTests(RouteTestCase):
         env = data["env"]
         self.assertEqual(env["ANTHROPIC_BASE_URL"], app.ROUTE_BASE_URL)
         self.assertEqual(env["ANTHROPIC_AUTH_TOKEN"], app.ROUTE_TOKEN_PLACEHOLDER)
-        self.assertEqual(env["ANTHROPIC_DEFAULT_SONNET_MODEL"], app.ROUTE_ALIASES["sonnet"])
-        self.assertEqual(env["ANTHROPIC_DEFAULT_HAIKU_MODEL"], app.ROUTE_ALIASES["haiku"])
-        self.assertEqual(env["ANTHROPIC_DEFAULT_OPUS_MODEL"], app.ROUTE_ALIASES["opus"])
+        self.assertEqual(env["ANTHROPIC_MODEL"], "mimo-v2.6")
+        self.assertEqual(env["ANTHROPIC_DEFAULT_OPUS_MODEL"], "hy4-preview[1M]")
+        self.assertNotIn("ANTHROPIC_DEFAULT_SONNET_MODEL", env)
+        self.assertNotIn("ANTHROPIC_DEFAULT_HAIKU_MODEL", env)
         # 非托管字段保留
         self.assertEqual(env["FOO"], "bar")
         self.assertEqual(data["theme"], "dark")
@@ -384,6 +393,115 @@ class ImportTests(RouteTestCase):
         res = client.post("/api/route/providers/import", json={"set_current": False})
         self.assertEqual(res.status_code, 400)
         self.proxy_cli_mock.assert_not_called()
+
+
+class ModelTableTests(RouteTestCase):
+    """settings_config.modelNodes / modelRoutes 的编排、校验与掩码。"""
+
+    def test_save_single_type_omits_model_flags(self):
+        app.route_provider_save({"name": "X", "base_url": "https://x", "token": "sk"})
+        args = self.proxy_cli_mock.call_args[0][0]
+        self.assertNotIn("--model-nodes", args)
+        self.assertNotIn("--model-routes", args)
+
+    def test_save_mixed_sends_json_flags(self):
+        app.route_provider_save({
+            "name": "X", "id": "x",
+            "model_nodes": [{"name": "a", "url": "https://a/v1/chat/completions", "key": ""}],
+            "model_routes": {"mimo-v2.6": {"node": "a", "format": "openai_chat"}},
+        })
+        args = self.proxy_cli_mock.call_args[0][0]
+        self.assertEqual(json.loads(args[args.index("--model-nodes") + 1]),
+                         [{"name": "a", "url": "https://a"}])  # chat 后缀被剥；"" key 显式清空
+        self.assertEqual(json.loads(args[args.index("--model-routes") + 1]),
+                         {"mimo-v2.6": {"node": "a", "format": "openai_chat"}})
+
+    def test_save_update_inherits_stored_node_keys(self):
+        # update 时留空 key 从存量同名节点继承——编辑节点不必重输 key
+        self.proxy_cli_mock.return_value = {
+            "providers": [{"id": "x", "name": "X",
+                           "settingsConfig": {"modelNodes": [{"name": "a", "key": "sk-old"}]}}],
+        }
+        app.route_provider_save({"id": "x", "name": "X", "model_nodes": [{"name": "a"}]})
+        args = self.proxy_cli_mock.call_args[0][0]
+        self.assertEqual(json.loads(args[args.index("--model-nodes") + 1]),
+                         [{"name": "a", "key": "sk-old"}])
+
+    def test_save_partial_update_omits_base_url_flag(self):
+        # 部分更新只传 name/base_url 缺席时，不得出现 --base-url ""
+        # （CLI 会把空串当成清除 ANTHROPIC_BASE_URL，env 会凭空丢掉它——
+        # 就地归一化曾把 None 变 ""，E2E 发现过这个回归）。
+        app.route_provider_save({"id": "x", "name": "X"})
+        args = self.proxy_cli_mock.call_args[0][0]
+        self.assertNotIn("--base-url", args)
+
+    def test_save_rejects_duplicate_node_names(self):
+        with self.assertRaises(app.RouteError):
+            app.route_provider_save({
+                "name": "X", "model_nodes": [{"name": "a"}, {"name": "a"}]})
+        self.proxy_cli_mock.assert_not_called()
+
+    def test_save_rejects_unknown_route_format(self):
+        with self.assertRaises(app.RouteError):
+            app.route_provider_save({
+                "name": "X", "model_routes": {"m": {"format": "ftp"}}})
+        self.proxy_cli_mock.assert_not_called()
+
+    def test_save_rejects_one_m_suffixed_model_key(self):
+        with self.assertRaises(app.RouteError):
+            app.route_provider_save({
+                "name": "X", "model_routes": {"m[1M]": {"format": "anthropic"}}})
+        self.proxy_cli_mock.assert_not_called()
+
+    def test_providers_masks_node_keys(self):
+        self.proxy_cli_mock.return_value = {
+            "providers": [{
+                "id": "x", "name": "X",
+                "settingsConfig": {
+                    "env": {"ANTHROPIC_AUTH_TOKEN": "sk-secret"},
+                    "modelNodes": [{"name": "a", "url": "https://a", "key": "sk-node"}],
+                    "modelRoutes": {"m": {"node": "a", "format": "openai_chat"}},
+                },
+            }],
+        }
+        out = app.route_providers()
+        node = out["providers"][0]["settingsConfig"]["modelNodes"][0]
+        self.assertEqual(node["key"], "***")
+        self.assertEqual(node["url"], "https://a")
+        self.assertEqual(out["providers"][0]["settingsConfig"]["modelRoutes"],
+                         {"m": {"node": "a", "format": "openai_chat"}})
+
+    def _authed_client(self):
+        app._token_store["t"] = {"login_time": time.time()}
+        client = app.app.test_client()
+        client.set_cookie("dd_token", "t")
+        return client
+
+    def test_api_rejects_non_list_nodes(self):
+        res = self._authed_client().post(
+            "/api/route/providers", json={"name": "X", "model_nodes": {"name": "a"}})
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("节点表必须是数组", res.get_json()["error"])
+        self.proxy_cli_mock.assert_not_called()
+
+    def test_api_rejects_bad_row_format(self):
+        res = self._authed_client().post(
+            "/api/route/providers",
+            json={"name": "X", "model_routes": {"m": {"format": "ftp"}}})
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("未知的接口形态", res.get_json()["error"])
+        self.proxy_cli_mock.assert_not_called()
+
+    def test_api_accepts_mixed_payload(self):
+        res = self._authed_client().post(
+            "/api/route/providers",
+            json={"name": "X",
+                  "model_nodes": [{"name": "a", "url": "https://a", "key": "sk"}],
+                  "model_routes": {"m": {"node": "a", "format": "openai_responses"}}})
+        self.assertEqual(res.status_code, 200)
+        args = self.proxy_cli_mock.call_args[0][0]
+        self.assertIn("--model-nodes", args)
+        self.assertIn("--model-routes", args)
 
 
 if __name__ == "__main__":
