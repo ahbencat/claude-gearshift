@@ -54,25 +54,30 @@
   }
   .config-item .actions button:hover { background: rgba(255,255,255,.08); }
   .config-item .actions .btn-del:hover { color: var(--danger); }
-  /* 供应商编辑器内的输入行（节点/模型路由表格与表单共用） */
+  /* 供应商编辑器：网格布局的表单，标签/控件对齐规则集中在这里 */
   .pe-input {
     width: 100%; padding: 6px 10px; border-radius: var(--radius);
     border: 1px solid var(--border); background: #13142a; color: var(--text);
-    font-size: 13px; box-sizing: border-box; margin-bottom: 0;
+    font-size: 13px; font-family: inherit; box-sizing: border-box; margin-bottom: 0;
   }
+  .pe-input option { background: #13142a; color: var(--text); }
+  .pe-grid { display: grid; gap: 12px; }
+  .pe-grid-2 { grid-template-columns: minmax(220px, 2fr) minmax(170px, 1fr); }
+  .pe-grid-3 { grid-template-columns: minmax(240px, 2fr) minmax(160px, 1fr) minmax(200px, 1.1fr); }
+  @media (max-width: 860px) { .pe-grid-2, .pe-grid-3 { grid-template-columns: 1fr; } }
+  .pe-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .pe-label { font-size: 12px; color: var(--muted); line-height: 1.4; }
+  .pe-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .pe-table th {
+    text-align: left; padding: 0 8px 5px 0; color: var(--muted);
+    font-size: 12px; font-weight: 600; vertical-align: bottom; white-space: nowrap;
+  }
+  .pe-table td { padding: 3px 8px 3px 0; vertical-align: middle; min-width: 0; }
+  .pe-table td.pe-del { width: 34px; padding: 3px 0; text-align: center; }
   .main {
     flex: 1; display: flex; flex-direction: column; padding: 24px; gap: 16px;
     overflow-y: auto; min-width: 0;
   }
-  .tabbar { display: flex; gap: 8px; }
-  .tabbtn {
-    padding: 6px 14px; border-radius: var(--radius); border: 1px solid var(--border);
-    background: transparent; color: var(--muted); font-size: 13px; cursor: pointer;
-    transition: all .15s;
-  }
-  .tabbtn:hover:not(:disabled) { background: rgba(255,255,255,.06); color: var(--text); }
-  .tabbtn.active { background: rgba(99,102,241,.12); border-color: var(--accent); color: var(--text); }
-  .tabbtn:disabled { opacity: .45; cursor: not-allowed; }
   .current-card {
     background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
     padding: 16px;
@@ -214,9 +219,13 @@
       </div>
     </div>
     <div id="routeSidebar" style="display:none;padding:8px 0;border-bottom:1px solid var(--border)">
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:0 8px 4px">
-        <span style="font-size:12px;font-weight:600;color:var(--muted)" data-i18n="sidebarRouteBlock">本地路由</span>
-        <button class="btn btn-sm" onclick="openNewProvider()" data-i18n-title="routeAddProvider" title="添加供应商">＋</button>
+      <div style="padding:0 8px 4px">
+        <div class="config-item" id="routeHomeEntry" onclick="selectRouteHome()" style="margin-bottom:0">
+          <span class="name">🔀 <span data-i18n="sidebarRouteBlock">本地路由</span></span>
+          <span class="actions">
+            <button onclick="event.stopPropagation();openNewProvider()" data-i18n-title="routeAddProvider" title="添加供应商">＋</button>
+          </span>
+        </div>
       </div>
       <div id="routeSidebarList" style="padding:0 4px"></div>
     </div>
@@ -227,10 +236,6 @@
 
   <!-- main -->
   <div class="main">
-    <div class="tabbar">
-      <button class="tabbtn active" id="tabConfig" onclick="setActiveTab('config')" data-i18n="tabCurrentConfig">当前配置</button>
-      <button class="tabbtn" id="tabRoute" onclick="setActiveTab('route')" data-i18n="tabLocalRouting" disabled>本地路由</button>
-    </div>
 
     <!-- page 1: 当前配置 -->
     <div id="tabPageConfig" style="display:flex;flex-direction:column;gap:16px;flex:1;min-height:0">
@@ -259,8 +264,8 @@
       </div>
     </div>
 
-    <!-- page 2: 本地路由 -->
-    <div id="tabPageRoute" style="display:none;flex-direction:column;gap:16px">
+    <!-- 本地路由主页 / 供应商编辑器：由左栏选择驱动，与上面的配置视图互斥 -->
+    <div id="routePage" style="display:none;flex-direction:column;gap:16px">
       <div class="current-card" id="routeCard" style="display:none">
         <h3 data-i18n="routeTitle">本地路由（cc-switch-proxy）</h3>
         <div id="routeStatusLine" style="font-size:13px;margin-bottom:10px;color:var(--muted)"></div>
@@ -302,14 +307,14 @@
           </div>
         </div>
         <div style="padding:14px;font-size:13px;display:flex;flex-direction:column;gap:12px;overflow-y:auto">
-          <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
-            <div style="flex:2;min-width:200px">
-              <div data-i18n="routeName">名称</div>
-              <input type="text" id="peName" placeholder="名称" style="margin-top:4px" class="pe-input" />
+          <div class="pe-grid pe-grid-2">
+            <div class="pe-field">
+              <div class="pe-label" data-i18n="routeName">名称</div>
+              <input type="text" id="peName" placeholder="名称" class="pe-input" />
             </div>
-            <div style="flex:1;min-width:180px">
-              <div data-i18n="routeTypeLabel">供应商类型</div>
-              <select id="peType" onchange="peTypeChanged()" style="margin-top:4px" class="pe-input">
+            <div class="pe-field">
+              <div class="pe-label" data-i18n="routeTypeLabel">供应商类型</div>
+              <select id="peType" onchange="peTypeChanged()" class="pe-input">
                 <option value="single" data-i18n="routeTypeSingle">单类型</option>
                 <option value="mixed" data-i18n="routeTypeMixed">混合类型</option>
               </select>
@@ -317,18 +322,18 @@
           </div>
           <div id="peTypeHint" style="font-size:12px;color:var(--muted)"></div>
 
-          <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
-            <div style="flex:2;min-width:240px">
-              <div data-i18n="routeDefaultPoint">默认接入点（Base URL）</div>
-              <input type="text" id="peBaseUrl" placeholder="https://…" style="margin-top:4px" class="pe-input" />
+          <div class="pe-grid pe-grid-3">
+            <div class="pe-field">
+              <div class="pe-label" data-i18n="routeDefaultPoint">默认接入点（Base URL）</div>
+              <input type="text" id="peBaseUrl" placeholder="https://…" class="pe-input" />
             </div>
-            <div style="flex:1;min-width:160px">
-              <div data-i18n="routeDefaultToken">默认 Key</div>
-              <input type="password" id="peToken" data-i18n-placeholder="routeTokenHint" placeholder="留空表示不修改" style="margin-top:4px" class="pe-input" />
+            <div class="pe-field">
+              <div class="pe-label" data-i18n="routeDefaultToken">默认 Key</div>
+              <input type="password" id="peToken" data-i18n-placeholder="routeTokenHint" placeholder="留空表示不修改" class="pe-input" />
             </div>
-            <div style="flex:1;min-width:180px">
-              <div data-i18n="routeApiFormat">上游协议（表外模型的兜底）</div>
-              <select id="peApiFormat" style="margin-top:4px" class="pe-input">
+            <div class="pe-field">
+              <div class="pe-label" data-i18n="routeApiFormat">上游协议（表外模型的兜底）</div>
+              <select id="peApiFormat" class="pe-input">
                 <option value="anthropic" data-i18n="routeApiFormatAnthropic">anthropic（默认，原样透传）</option>
                 <option value="openai_chat" data-i18n="routeApiFormatOpenAIChat">openai_chat（OpenAI 对话接口）</option>
                 <option value="openai_responses" data-i18n="routeApiFormatOpenAIResponses">openai_responses（OpenAI Responses）</option>
@@ -339,35 +344,41 @@
 
           <!-- 混合类型：节点 + 每模型路由 -->
           <div id="peMixed">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
               <strong data-i18n="routeNodeTableTitle">节点（接入点 / Key）</strong>
               <button class="btn btn-sm" onclick="peAddNode()" data-i18n="routeAddNode">＋ 节点</button>
             </div>
-            <table style="width:100%;font-size:13px;border-collapse:collapse">
-              <thead><tr style="color:var(--muted)">
-                <th style="text-align:left;padding:2px 6px 6px 0;width:24%" data-i18n="routeNodeName">节点名</th>
-                <th style="text-align:left;padding:2px 6px 6px 0" data-i18n="routeNodeUrl">接入点 URL（可留空 = 用默认）</th>
-                <th style="text-align:left;padding:2px 6px 6px 0;width:30%" data-i18n="routeNodeKey">Key（留空 = 保持原值）</th>
-                <th style="width:34px"></th>
+            <table class="pe-table">
+              <colgroup>
+                <col style="width:20%"><col style="width:40%"><col style="width:30%"><col style="width:34px">
+              </colgroup>
+              <thead><tr>
+                <th data-i18n="routeNodeName">节点名</th>
+                <th data-i18n="routeNodeUrl">接入点 URL（可留空 = 用默认）</th>
+                <th data-i18n="routeNodeKey">Key（留空 = 保持原值）</th>
+                <th></th>
               </tr></thead>
               <tbody id="peNodeRows"></tbody>
             </table>
-            <div id="peNodeEmpty" class="empty" data-i18n="routeNoNodesHint">还没有节点：不配节点时全部请求走默认接入点，表格只用来切协议/换 Key。</div>
+            <div id="peNodeEmpty" class="empty" style="padding:14px 0" data-i18n="routeNoNodesHint">还没有节点：不配节点时全部请求走默认接入点，表格只用来切协议/换 Key。</div>
 
-            <div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 4px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 6px">
               <strong data-i18n="routeRouteTableTitle">模型路由</strong>
               <button class="btn btn-sm" onclick="peAddRoute()" data-i18n="routeAddRoute">＋ 模型</button>
             </div>
-            <table style="width:100%;font-size:13px;border-collapse:collapse">
-              <thead><tr style="color:var(--muted)">
-                <th style="text-align:left;padding:2px 6px 6px 0;width:36%" data-i18n="routeRouteModel">模型名（真实上游名，不带 [1m] 后缀）</th>
-                <th style="text-align:left;padding:2px 6px 6px 0;width:34%" data-i18n="routeRouteNode">节点</th>
-                <th style="text-align:left;padding:2px 6px 6px 0" data-i18n="routeRouteFormat">接口形态</th>
-                <th style="width:34px"></th>
+            <table class="pe-table">
+              <colgroup>
+                <col style="width:34%"><col style="width:26%"><col style="width:30%"><col style="width:34px">
+              </colgroup>
+              <thead><tr>
+                <th data-i18n="routeRouteModel">模型名（真实上游名，不带 [1m] 后缀）</th>
+                <th data-i18n="routeRouteNode">节点</th>
+                <th data-i18n="routeRouteFormat">接口形态</th>
+                <th></th>
               </tr></thead>
               <tbody id="peRouteRows"></tbody>
             </table>
-            <div id="peRouteEmpty" class="empty" data-i18n="routeNoRoutesHint">没有按模型的路由：所有请求走上面的默认接入点与协议。</div>
+            <div id="peRouteEmpty" class="empty" style="padding:14px 0" data-i18n="routeNoRoutesHint">没有按模型的路由：所有请求走上面的默认接入点与协议。</div>
           </div>
 
           <div style="font-size:12px;color:var(--muted);border-top:1px solid var(--border);padding-top:10px">
@@ -503,29 +514,18 @@ async function api(method, path, body) {
   return data;
 }
 
-// --- Tabs (当前配置 / 本地路由) ---
-let activeTab = "config";
-let routeTabAvailable = false; // 本地服务器且路由面板可用时才允许切到路由页
-
-function setActiveTab(name) {
-  if (name === "route" && !routeTabAvailable) return;
-  activeTab = name;
-  document.getElementById("tabConfig").classList.toggle("active", name === "config");
-  document.getElementById("tabRoute").classList.toggle("active", name === "route");
-  document.getElementById("tabPageConfig").style.display =
-    name === "config" ? "flex" : "none";
-  document.getElementById("tabPageRoute").style.display =
-    name === "route" ? "flex" : "none";
-}
+// --- 主区视图（无页签，左栏选择驱动） ---
+// 主区里的「本地路由」（routePage：路由控制卡片 + 出站代理 + 使用说明）不再有
+// 独立页签——改由左栏「本地路由」区块点击进入；供应商编辑器同样从此处点开。
+let routeTabAvailable = false; // 只有本地服务器且路由面板可用时，路由内容才可用
 
 function syncRouteTab(isLocal) {
   routeTabAvailable = isLocal;
-  document.getElementById("tabRoute").disabled = !isLocal;
   document.getElementById("routeSidebar").style.display = isLocal ? "block" : "none";
   if (!isLocal) {
-    // 路由不可用（远程服务器 / 面板缺失）时不保留供应商选中态
+    // 路由不可用（远程服务器 / 面板缺失）时不保留路由相关选中态
     if (selectedItem && selectedItem.kind === "provider") selectedItem = null;
-    setActiveTab("config");
+    if (selectedItem && selectedItem.kind === "route") selectedItem = null;
     renderConfigView();
   } else {
     renderRouteSidebar();
@@ -533,32 +533,32 @@ function syncRouteTab(isLocal) {
   renderRouteEntry();
 }
 
-// 左栏单视图：“当前配置”默认展示；点文件则只显示该文件（页签换成文件名）；
-// 点左栏「本地路由」里的供应商则显示供应商编辑器（页签换成供应商名）。
-// 三者互不叠加，同一时刻只显示一个。
+// 左栏单视图：点「当前配置」→ 当前配置卡片；点配置档 → 文件视图；
+// 点「本地路由」区块 → 路由控制卡片；点路由区块里的供应商 → 供应商编辑器。
+// 四者互不叠加，同一时刻只显示一个。
 function renderConfigView() {
   const kind = selectedItem ? selectedItem.kind : null;
   const isFile = kind === "file";
   const isProvider = kind === "provider";
-  document.getElementById("currentCard").style.display = isFile ? "none" : "block";
+  const isRoute = kind === "route";
+  document.getElementById("currentCard").style.display =
+    !isFile && !isProvider && !isRoute ? "block" : "none";
   document.getElementById("fileView").style.display = isFile ? "flex" : "none";
-  document.getElementById("tabConfig").textContent = isFile ? selectedItem.name : t("tabCurrentConfig");
-  document.getElementById("currentConfigEntry").classList.toggle("active", !isFile);
-  document.getElementById("routeCard").style.display = isProvider ? "none" : "block";
+  document.getElementById("routePage").style.display =
+    isProvider || isRoute ? "flex" : "none";
+  document.getElementById("routeCard").style.display = isRoute ? "block" : "none";
   document.getElementById("providerEditor").style.display = isProvider ? "flex" : "none";
   document.getElementById("routeManual").style.display = isProvider ? "none" : "block";
-  document.getElementById("tabRoute").textContent = isProvider
-    ? (selectedItem.isNew ? t("routeAddProvider") : epName(selectedItem))
-    : t("tabLocalRouting");
-  if (activeTab !== "route") return;
+  document.getElementById("currentConfigEntry").classList.toggle("active", !selectedItem);
+  document.getElementById("routeHomeEntry").classList.toggle("active", isRoute);
+  if (isRoute || isProvider) renderRouteSidebar();
   if (isProvider) renderProviderEditor();
-  renderRouteSidebar();
 }
 
-function epName(item) {
-  if (item.isNew) return t("routeAddProvider");
-  const p = routeProviders.find((x) => x.id === item.id);
-  return (p && p.name) || t("routeEditProvider");
+function selectRouteHome() {
+  selectedItem = { kind: "route" };
+  ep = null;
+  renderConfigView();
 }
 
 async function showCurrentConfig() {
@@ -566,7 +566,6 @@ async function showCurrentConfig() {
   currentName = null; // 左侧单选：回到当前配置时清除文件选中态
   renderSidebar();
   renderConfigView();
-  if (activeTab !== "config") setActiveTab("config");
   if (currentServer === "local") await loadCurrent();
   else await loadRemoteCurrent(currentServer);
 }
@@ -732,19 +731,17 @@ function providerWorkingCopy(id, isNew) {
 function selectProvider(id) {
   selectedItem = { kind: "provider", id, isNew: false };
   ep = providerWorkingCopy(id, false);
-  if (activeTab !== "route") setActiveTab("route");
   renderConfigView();
 }
 
 function openNewProvider() {
   selectedItem = { kind: "provider", id: null, isNew: true };
   ep = providerWorkingCopy(null, true);
-  if (activeTab !== "route") setActiveTab("route");
   renderConfigView();
 }
 
 function backToRoute() {
-  selectedItem = null; ep = null;
+  selectedItem = { kind: "route" }; ep = null;
   renderConfigView();
 }
 
@@ -800,10 +797,10 @@ function peNodeRowHtml(n, i) {
   const keyHint = n.storedKey
     ? t("routeNodeKeyKeepPlaceholder") : t("routeNodeKeyPlaceholder");
   return `<tr data-i="${i}">
-    <td style="padding:2px 6px 6px 0"><input class="pe-input pe-n-name" value="${esc(n.name)}" placeholder="${esc(t("routeNodeName"))}" /></td>
-    <td style="padding:2px 6px 6px 0"><input class="pe-input pe-n-url" value="${esc(n.url)}" placeholder="${esc(t("routeNodeUrlPlaceholder"))}" /></td>
-    <td style="padding:2px 6px 6px 0"><input type="password" class="pe-input pe-n-key" value="" placeholder="${esc(keyHint)}" /></td>
-    <td><button class="btn btn-sm btn-del" onclick="peRemoveNode(${i})">✕</button></td>
+    <td><input class="pe-input pe-n-name" value="${esc(n.name)}" placeholder="${esc(t("routeNodeName"))}" /></td>
+    <td><input class="pe-input pe-n-url" value="${esc(n.url)}" placeholder="${esc(t("routeNodeUrlPlaceholder"))}" /></td>
+    <td><input type="password" class="pe-input pe-n-key" value="" placeholder="${esc(keyHint)}" /></td>
+    <td class="pe-del"><button class="btn btn-sm btn-del" onclick="peRemoveNode(${i})">✕</button></td>
   </tr>`;
 }
 
@@ -825,10 +822,10 @@ function renderPeRouteRowHtml(r, i) {
     .map((f) => `<option value="${f}"${r.format === f ? " selected" : ""}>${f ? esc(f) : esc(t("routeFormatFallback"))}</option>`)
     .join("");
   return `<tr data-i="${i}">
-    <td style="padding:2px 6px 6px 0"><input class="pe-input pe-r-model" value="${esc(r.model)}" placeholder="hy4-preview" /></td>
-    <td style="padding:2px 6px 6px 0"><select class="pe-input pe-r-node">${nodeOptions}</select></td>
-    <td style="padding:2px 6px 6px 0"><select class="pe-input pe-r-format">${fmtOptions}</select></td>
-    <td><button class="btn btn-sm btn-del" onclick="peRemoveRoute(${i})">✕</button></td>
+    <td><input class="pe-input pe-r-model" value="${esc(r.model)}" placeholder="hy4-preview" /></td>
+    <td><select class="pe-input pe-r-node">${nodeOptions}</select></td>
+    <td><select class="pe-input pe-r-format">${fmtOptions}</select></td>
+    <td class="pe-del"><button class="btn btn-sm btn-del" onclick="peRemoveRoute(${i})">✕</button></td>
   </tr>`;
 }
 
@@ -1035,9 +1032,9 @@ async function routeToggleFromCurrent() {
       toast(t("routeStopped"), "success");
     } else {
       if (!routeCurrent) {
-        // 还没有可用供应商：带用户去路由页添加
+        // 还没有可用供应商：带用户去路由主页添加
         toast(t("routeNoProviders"), "error");
-        setActiveTab("route");
+        selectRouteHome();
         return;
       }
       if (!routeActive) {
