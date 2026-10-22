@@ -47,7 +47,7 @@ installs the result to `bin/` (the cc-switch tree is left untouched). Point it a
 another checkout with `make binary CC_SWITCH_DIR=/path/to/cc-switch`.
 
 To build by hand instead (needs the Tauri Linux prerequisites — see
-`cc-switch/CONTRIBUTING.md`). The frontend `dist/` placeholder must exist even
+`../cc-switch/CONTRIBUTING.md`). The frontend `dist/` placeholder must exist even
 for this backend-only binary:
 
 ```bash

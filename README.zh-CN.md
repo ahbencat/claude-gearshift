@@ -172,7 +172,7 @@ systemctl --user restart dd-switch
 | 阶段 | 需要什么 | 怎么提供 |
 |---|---|---|
 | **运行期** | `libwebkit2gtk-4.1.so.0` 与 `libjavascriptcoregtk-4.1.so.0` 及其依赖（`libgstgl-1.0`、`libwebpdemux`、`libharfbuzz-icu`、`libmanette-0.2`、`libenchant-2`、`libhyphen`、`libsecret-1`，以及 mesa/egl/gbm、词典包）。GTK 3 / libsoup 3 一般已随系统装好。 | 有 root：`sudo apt-get install libwebkit2gtk-4.1-0`（会自动带上其余依赖）。免 root：把运行库 `.deb` 解包到一个目录，再用 `LD_LIBRARY_PATH` 指过去——命令见 [`patches/README.md`](patches/README.md#prebuilt-binary)。 |
-| **编译期** | 完整的 Tauri Linux 前置——WebKitGTK/GTK **dev** 包。因为 proxy 链接的是整个 `cc_switch_lib` crate（`cc-switch/src-tauri`），这是 **Tauri 的要求**，与 OAuth 无关。 | 见 [`cc-switch/CONTRIBUTING.md`](../cc-switch/CONTRIBUTING.md)；免 root 编译也可行：把 dev `.deb` 解包成 sysroot，再用 `pkg-config`/`LIBRARY_PATH` 指过去。 |
+| **编译期** | 完整的 Tauri Linux 前置——WebKitGTK/GTK **dev** 包。因为 proxy 链接的是整个 `cc_switch_lib` crate（`cc-switch/src-tauri`），这是 **Tauri 的要求**，与 OAuth 无关。 | 见 [`cc-switch/CONTRIBUTING.md`](cc-switch/CONTRIBUTING.md)；免 root 编译也可行：把 dev `.deb` 解包成 sysroot，再用 `pkg-config`/`LIBRARY_PATH` 指过去。 |
 
 > **OAuth 限制**：走登录授权的供应商（GitHub Copilot、ChatGPT/Codex、xAI）只能在
 > cc-switch **桌面端**里用——headless 守护进程没有 `AppHandle`，只支持 API Key 类
@@ -182,6 +182,9 @@ systemctl --user restart dd-switch
 
 - 先拿到 `cc-switch-proxy`：用 `patches/bin/` 里的预编译二进制（Linux x86_64），
   或自行构建——见 [`patches/README.md`](patches/README.md)；编译/运行依赖见上表。
+  开发者说明：被打补丁的源码 `cc-switch` 以 **git submodule** 形式包含在本仓库里
+  （钉住补丁适用的那个 commit）——用 `--recurse-submodule` 克隆，或克隆后补一句
+  `git submodule update --init`。
 - 可执行文件从 `PATH`（或 `DD_SWITCH_ROUTE_PROXY_BIN`）解析——用你平时启动它的
   那个环境即可。
 - 供应商凭据落在 cc-switch 的库里（用户私有），并在所有 API 响应中打码——不要写进
