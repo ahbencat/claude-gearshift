@@ -1,8 +1,8 @@
 # patches/
 
-Changes we maintain **on top of an unmodified `cc-switch` checkout**. The
-`cc-switch/` directory is a fork of upstream and is kept pristine — never edit
-it in place, never commit our changes into it. Instead, apply the patch here.
+Changes we maintain **on top of an unmodified `cc-switch` checkout** (a git
+submodule of upstream, kept pristine). Never edit the submodule contents in
+place and never commit our changes into it — carry them in the patch here.
 
 ## `cc-switch-headless-proxy.patch`
 
@@ -23,12 +23,19 @@ that lets `linux_switch` spawn the Rust router instead of LiteLLM.
 
 ### Apply
 
+`cc-switch` is a **git submodule** of this repository, pinned to the commit
+the patch targets (`479964f2`, v4.0.10). Check it out and apply there:
+
 ```bash
-git clone https://github.com/farion1231/cc-switch.git
+git submodule update --init          # or: git submodule update
 cd cc-switch
-git checkout 479964f2            # or a compatible main
-git apply /path/to/cc-switch-headless-proxy.patch
+git apply /path/to/patches/cc-switch-headless-proxy.patch
 ```
+
+`patches/Makefile` does this automatically for a build: its `CC_SWITCH_DIR`
+defaults to `../cc-switch` (the submodule); override with
+`make binary CC_SWITCH_DIR=/path/to/cc-switch` when you want to build from a
+different checkout.
 
 Verify it applies first with `git apply --check <patch>`.
 

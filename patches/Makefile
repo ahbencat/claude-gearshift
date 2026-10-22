@@ -6,8 +6,8 @@
 #   make apply      apply the patch in place (for inspection; leaves the tree dirty)
 #   make clean      remove the build worktree
 #
-# The cc-switch checkout defaults to ../../cc-switch; override it when it lives
-# elsewhere:
+# The cc-switch checkout defaults to ../cc-switch (the repo's submodule);
+# override it when cc-switch is checked out somewhere else:
 #
 #   make binary CC_SWITCH_DIR=/path/to/cc-switch
 #
@@ -16,7 +16,7 @@
 # untouched: the build runs in a detached git worktree outside the repo (default
 # ~/.cache/cc-switch-proxy-build, override with BUILD_DIR=…).
 
-CC_SWITCH_DIR ?= ../../cc-switch
+CC_SWITCH_DIR ?= ../cc-switch
 BUILD_DIR     ?= $(HOME)/.cache/cc-switch-proxy-build
 PATCH         := $(abspath cc-switch-headless-proxy.patch)
 OUT           := bin/cc-switch-proxy-linux-x86_64

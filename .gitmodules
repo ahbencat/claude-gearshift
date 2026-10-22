@@ -1,0 +1,3 @@
+[submodule "cc-switch"]
+	path = cc-switch
+	url = https://github.com/farion1231/cc-switch.git
