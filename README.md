@@ -193,6 +193,32 @@ points) is mapped file-by-file in
    process group is terminated. A failed restore keeps the state so the
    operation can be retried.
 
+### Local routing vs profiles: separation by design (read before mixing)
+
+Local routing and the standalone profiles under `config/` are two systems
+that never read each other's state. That is deliberate:
+
+| | Standalone profiles (`config/*.json`) | Local routing (cc-switch DB) |
+|---|---|---|
+| Stores | A whole `env` (direct upstream URL + real key + model names) | Providers (URL + key + protocol / nodes / route table); no model names |
+| Takes effect | Switch = replace the entire `env` in settings.json | Start = rewrite only the two dispatch keys to point at the gateway |
+| Cross-effects | Routing never reads `config/`; switching profiles never touches the DB | Importing from `config/` is a **copy** — the source file stays as-is |
+
+Four things to think through before mixing them:
+
+- **Import copies, it doesn't move** — after `provider import` the key exists
+  twice (source file + DB). If the DB is your source of truth, delete the
+  source file or clear its key by hand.
+- **The two sides drift** — after import, editing a profile never syncs to
+  the provider and vice versa. Pick one source of truth, treat the other
+  as a template.
+- **Switching is locked while routing** — switching profiles would corrupt
+  the restore snapshot, so the panel forbids it; stop routing first.
+- **Model names live in exactly one place** — `ANTHROPIC_MODEL` /
+  `ANTHROPIC_DEFAULT_*_MODEL` in `~/.claude/settings.json`, written by
+  neither side; the router only reads the model name off each request to
+  dispatch it.
+
 **Setup** — all settings live in dd-switch's `EnvironmentFile`
 (`~/.config/systemd/user/dd-switch.env`, mode 0600); nothing is hardcoded:
 
