@@ -22,8 +22,10 @@ Web UI（`dd-switch/`，Flask + waitress，浏览器操作，密码保护）是�
   的 `~/.claude/settings.json`。
 - **预设配置档，一键切换** —— 每套供应商存成 `config/` 下的一个文件；切换只替换
   `env` 并原子写入，`theme` / `permissions` / `skills` 原样不动。
-- **可选的本地路由** —— 让某台服务器的 Claude Code 指向 `cc-switch-proxy` 网关，
-  集中更换上游供应商，不必每次回去改那台机器的配置。
+- **⭐ 按模型路由（核心卖点）** —— 本项目在 cc-switch 原生路由引擎上打的补丁：
+  同一个供应商下，不同模型可走不同接入点、不同 Key、不同接口形态，逐请求自动
+  分流。opencode 这类多形态上游、同一接入点多 Key 轮换，配两张表搞定——见
+  [本地路由](#本地路由cc-switch-proxy可选)。
 - **默认安全** —— 全程密码保护、UI 里凭据打码、每次切换前自动备份。
 
 不必再逐台手改，也不会出现机器之间的配置漂移。
@@ -85,6 +87,13 @@ Web UI **全程密码保护** —— 每个页面、每个 API 接口都必须�
 （见 [`patches/`](patches/README.md)）；dd-switch 只负责启停它并把 Claude Code
 指过去。供应商来自 cc-switch 的 SQLite 库。
 
+> **⭐ 核心卖点：按模型逐请求分流。** 上游 cc-switch 的原生路由是按供应商整库
+> 定协议的；本补丁往原生引擎里加了整套按模型传输覆盖（`proxy/model_route.rs`
+> + `forwarder` / `handlers` / `claude` 三处集成，逐文件对照见
+> [`patches/README.md`](patches/README.md#native-engine-changes-原生路由引擎改动)）——
+> 同一供应商内，每个模型可走不同的节点（url/key）与接口形态，命中走表、未命中
+> 回落默认。下面「供应商的两种类型」即是它的用法。
+
 > **现状：✅ 整体已通，待优化逻辑。** `dd-switch/test_suite/test_local_routing_e2e.py`
 > 用**真实** `cc-switch-proxy` 二进制对着**真实**上游（`../../test_data/.testdata`）
 > 验证：OpenAI-Chat 协议转换（非流式 + SSE 流式）、供应商 CRUD、以及
@@ -132,7 +141,9 @@ Web UI **全程密码保护** —— 每个页面、每个 API 接口都必须�
 
 请求里的模型名（剥掉 `[1m]` 后缀后）命中该供应商的模型路由表就按表分流；
 未命中走默认接入点与默认协议。所以表里的模型键要写**剥掉 [1m] 后缀**的名字
-（`hy4-preview`）。
+（`hy4-preview`）。Rust 侧的实现（lookup 模块 + forwarder/handlers 集成点）
+在 [`patches/README.md`](patches/README.md#native-engine-changes-原生路由引擎改动)
+里按文件逐一对照。
 
 **工作方式**
 

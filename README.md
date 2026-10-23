@@ -25,9 +25,12 @@ One password-protected Web UI fixes that:
 - **Predefined profiles, one-click switch** — keep each provider as a file under
   `config/`; switching replaces only `env` and writes atomically, so `theme` /
   `permissions` / `skills` stay untouched.
-- **Optional local routing** — point a server's Claude Code at the
-  `cc-switch-proxy` gateway and change upstream providers centrally, without
-  re-editing that machine's config each time.
+- **⭐ Per-model routing (headline feature)** — this project's patch to
+  cc-switch's native routing engine: within one provider, different models can
+  use different access points, keys, and API shapes, dispatched per request.
+  Multi-shape upstreams like opencode, or multi-key rotation on one access
+  point, are two tables — see
+  [Local Routing](#local-routing-cc-switch-proxy-optional).
 - **Safe by default** — password-protected end to end, credentials masked in the
   UI, automatic backup before every switch.
 
@@ -91,6 +94,16 @@ from a patched cc-switch (see [`patches/`](patches/README.md)); dd-switch only
 starts/stops it and points Claude Code at it. Providers come from cc-switch's
 SQLite database.
 
+> **⭐ Headline feature: per-model, per-request dispatch.** Upstream cc-switch
+> routes natively at whole-provider granularity; this patch adds a full
+> per-model transport overlay to the native engine (`proxy/model_route.rs`
+> plus three `forwarder` / `handlers` / `claude` integration points, mapped
+> file-by-file in
+> [`patches/README.md`](patches/README.md#native-engine-changes-原生路由引擎改动)) —
+> inside one provider, each model can take its own node (url/key) and API
+> shape, with misses falling back to the default. "The two provider types"
+> below is how you use it.
+
 > **Status: ✅ working end-to-end overall; logic refinements pending.**
 > `dd-switch/test_suite/test_local_routing_e2e.py`
 > drives the **real** `cc-switch-proxy` binary against a **live** upstream
@@ -151,6 +164,9 @@ real upstream model names into Claude Code's `~/.claude/settings.json` yourself:
 A request's model name (after the `[1m]` suffix is stripped) is matched against
 the provider's model-route table; misses use the default access point and
 protocol. So table keys must be the **stripped** names (`hy4-preview`).
+The Rust-side implementation (lookup module + forwarder/handlers integration
+points) is mapped file-by-file in
+[`patches/README.md`](patches/README.md#native-engine-changes-原生路由引擎改动).
 
 **How it works**
 

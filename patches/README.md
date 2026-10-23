@@ -20,6 +20,10 @@ that lets `linux_switch` spawn the Rust router instead of LiteLLM.
   - `src-tauri/src/provider_cli.rs` — new module: `provider` subcommands (DAO-backed)
   - `src-tauri/src/proxy_cli.rs` — new module: `proxy` subcommand (global outbound proxy, DAO-backed)
   - `src-tauri/src/bin/cc-switch-proxy.rs` — new binary entrypoint
+  - Native engine (per-model transport, see below): `src-tauri/src/proxy/model_route.rs`
+    (new), `src-tauri/src/proxy/mod.rs` (module decl), `src-tauri/src/proxy/forwarder.rs`
+    (url/key/format overrides), `src-tauri/src/proxy/handlers.rs` (anthropic
+    passthrough arm), `src-tauri/src/proxy/providers/claude.rs` (`needs_transform` gate)
 
 ### Apply
 
@@ -189,6 +193,54 @@ cc-switch-proxy provider update --id relay \
 - `update` preserves unknown top-level keys of the existing
   `settings_config` (only `env` is rebuilt), so tables and legacy fields
   survive partial updates.
+
+### Native engine changes (原生路由引擎改动)
+
+> ⭐ **Core selling point of this project** — upstream cc-switch routes at
+> whole-provider granularity (one protocol per provider); this patch
+> dispatches url/key/protocol **per model, per request** inside a single
+> provider. If you take one thing away from this file, take this section.
+
+The CLI surface above is only half the patch — the other half teaches
+cc-switch's existing Rust router to honor the per-model tables at request
+time. All native changes live under `src-tauri/src/proxy/`; the headless
+daemon reuses them untouched (no forked forwarding logic):
+
+- **`proxy/model_route.rs` (new, ~170 lines + 5 unit tests)** — the single
+  lookup for `settings_config.modelRoutes` / `modelNodes`. `lookup(provider,
+  model)` strips the `[1m]` context marker before matching (same helper the
+  forwarder already uses, so table keys are always the stripped names),
+  resolves `{node, format}`, and returns `{api_format, base_url, api_key}`
+  with per-field fallback to the provider default. `has_routes(provider)`
+  reports whether a provider declares a route table at all. Unknown formats,
+  blank url/key strings, and missing tables all degrade to `None` (= legacy
+  single-protocol path). `MODEL_ROUTE_FORMATS` mirrors the `--api-format`
+  value domain (`anthropic` / `openai_chat` / `openai_responses` /
+  `gemini_native`).
+- **`proxy/forwarder.rs` (3 hooks, one shared `lookup`)** — per request, after
+  the model name is captured once into `routed_model` (shared by the url and
+  key hooks so both see the same name): ① base-url override for the Claude
+  adapter (node url replaces `base_url`, `isFullUrl` providers exempt); ②
+  api-key override for static-key strategies only (dynamic OAuth managers —
+  Copilot/Codex/xAI/GeminiCli — keep their tokens); ③
+  `resolve_claude_api_format` checks the route table first, so a routed
+  model's `format` wins over the provider-level protocol.
+- **`proxy/handlers.rs` (1 arm)** — a per-model route that resolves back to
+  `anthropic` already carries an Anthropic response; the new match arm returns
+  it directly instead of falling into the `openai_to_anthropic` fallback.
+- **`proxy/providers/claude.rs` (`needs_transform` gate)** — a provider that
+  declares `modelRoutes` is per-model by definition, so its provider-level
+  `anthropic` default must not downgrade the whole stream to passthrough: the
+  gate is now `has_routes(provider) || <legacy format check>`, sending mixed
+  providers through the unified response path where the per-model `format`
+  decides per request.
+
+Net effect: three usage shapes collapse onto one table — full url+key node =
+independent access point, key-only node = multi-key supplement, format-only
+route = protocol switch — with misses falling back to the provider default.
+`cargo test --lib model_route` covers the lookup matrix; the live matrix
+(dead-url no-fallback, format-only recovery, path selection) is exercised by
+`dd-switch/test_suite/test_local_routing_opencode_e2e.py`.
 
 ### Global outbound proxy subcommand
 
