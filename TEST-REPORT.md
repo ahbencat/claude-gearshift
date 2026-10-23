@@ -1,17 +1,11 @@
 # claude-gearshift — test report
 
-> **Follow-up (2026-10-20):** all 8 defects below are fixed (commit
-> `91c28a5`); the 11 `expectedFailure` markers in `test_regressions.py`
-> are dropped and the whole suite (81 tests) passes with zero expected
-> failures.
->
-> **Re-audit (2026-10-21):** a second audit on the fixed code found four
-> NEW defects (#9–#12), all pinned with `@unittest.expectedFailure` — see
-> "**Second audit**" below. Suite: 86 tests, `OK (expected failures=4)`;
-> defect #13 is documented behaviour, not a defect.
->
-> **Fixed 2026-10-21:** #9–#12 are fixed (commit `a03bb31`); all markers are
-> dropped and the suite passes with zero expected failures.
+> **Status:** every defect below is fixed — #1–#8 (`91c28a5`), #9–#12
+> (`a03bb31`), #14–#16 (routing patch + rebuilt binary, 2026-10-22) — and
+> the suite passes with zero expected failures (see "Recommendations").
+> History: "Second audit" (2026-10-21) found #9–#12; "Third audit"
+> (2026-10-22, node-type suite against the real opencode gateway, 单类型 /
+> 多类型) found #14–#16. #13 is documented behaviour, not a defect.
 
 Date: 2026-10-20
 Scope: `linux_switch/` (the Flask Web UI, `dd-switch/`) + the local-routing
@@ -26,15 +20,18 @@ cd linux_switch/dd-switch
 
 | Suite | Tests | Result |
 |---|---|---|
-| `test_proxy_route.py` (pre-existing, fully mocked) | 23 | pass |
-| `test_regressions.py` (new) | 35 | pass (4 `expectedFailure` pin #9– #12; #1–8 fixed & migrated to guards) |
-| `test_i18n.py` (new) | 5 | pass |
-| `test_local_routing_e2e.py` (new, real binary + real upstream) | 23 | pass |
-| **total** | **86** | **OK (expected failures=4)** |
+| `test_proxy_route.py` (mocked routing engine) | 39 | pass |
+| `test_regressions.py` (defect guards) | 35 | pass (zero expected failures) |
+| `test_i18n.py` | 5 | pass |
+| `test_local_routing_e2e.py` (real binary + real upstream) | 25 | pass |
+| `test_local_routing_opencode_e2e.py` (real opencode gateway; 2 live + 3 offline sink) | 5 | pass |
+| **total** | **109** | **OK** |
 
-Run three times in a row: green every time (48–92 s per run, mostly upstream
-latency). The E2E suite skips cleanly (23 skips, 0 failures) when the endpoint
-or the proxy binary is unavailable.
+The 2026-10-23 counting run: **109/109 OK** in one sweep (~2 min; the live E2E
+legs dominate the wall time). Network-dependent suites skip cleanly (never
+fail) when the opencode node config, the endpoint or the proxy binary is
+unavailable; the new offline sink tests (`NodeKeyOverrideTests`,
+`ResponseTransformTests`) run with **no** network access.
 
 ## Local routing — end-to-end verified
 
@@ -73,8 +70,8 @@ Verified against the live upstream:
    suffix.** The proxy appends that path itself. Passing the full endpoint
    produces `…/v1/chat/completions/v1/chat/completions`, which the upstream
    rejects with an empty `upstream_error`. The E2E suite strips the suffix
-   automatically — but the Web UI has no such normalisation, so a user pasting
-   the endpoint URL gets an opaque failure.
+   automatically — and since `a03bb31` the Web UI normalises on save too
+   (see #12), so pasting the full endpoint URL is harmless.
 2. **The upstream needs an `x-opencode-session` header.** The proxy handles
    this itself (it detects `opencode.ai` and synthesises a stable session id),
    so no manual step is needed — good, but it means the upstream is only
@@ -205,8 +202,108 @@ grows without bound in the long-running waitress process.
 so a user pasting the full endpoint — the natural copy-paste from a provider
 page — produces `…/v1/chat/completions/v1/chat/completions`, which the
 upstream rejects with an empty `upstream_error` (reconfirmed live against
-the real binary). The save path should strip the known suffix, as the E2E
-suite already does.
+the real binary). Fixed in `a03bb31`: the save path strips the known suffix
+— now the shared `_strip_chat_suffix` helper, also applied to node URLs and
+provider import.
+
+## Third audit — the multi-protocol node suite (2026-10-22)
+
+New suite `dd-switch/test_suite/test_local_routing_opencode_e2e.py` drives the
+**real opencode gateway** (bases obtained from the opencode docs' Endpoints
+table, the same source the `deploy/lite_llm` model-sync scripts parse — no
+LiteLLM in the loop):
+
+| shape | upstream path |
+|---|---|
+| `openai_chat` | `{base}/v1/chat/completions` |
+| `openai_responses` | `{base}/v1/responses` |
+| `anthropic` | `{base}/v1/messages` |
+| `gemini_native` | `{base}/models/{model}:generateContent` |
+
+Live results on the fixed binary: all four **single-type**
+providers answer Claude-Code traffic, and one **mixed-type** provider (its own
+access point deliberately dead, junk token, node table carrying the real
+endpoints) dispatches four models onto four different wire protocols. Region
+note: some opencode Responses-group models (gpt-6-luna, muse-spark-…) are
+geo-locked and need an egress proxy — the suite uses `grok-4.7`, which speaks
+`/responses` direct. That is upstream model policy, not a routing defect.
+
+### 14. Anthropic passthrough panics the headless proxy — **high (routing)**
+
+Symptom: a provider with `api_format=anthropic` makes the daemon close the
+client connection without any response (`RemoteDisconnected`). The route log
+shows a rustls panic:
+
+    Could not automatically determine the process-level CryptoProvider ...
+
+Root cause: the GUI app installs the process-level rustls CryptoProvider once
+at startup (`cc-switch/src-tauri/src/lib.rs:466`). The headless
+`cc-switch-proxy` bin added by the patch never runs that setup, and the
+anthropic-format relay is the one production path that builds a rustls client
+— first use panics the tokio worker and the connection dies bare. (The other
+three `install_default` calls in `forwarder.rs` are `#[cfg(test)]` helpers.)
+
+Fix (2026-10-22): the patch installs the provider at daemon start (bin
+`main`, mirroring `lib.rs:466`, defensive `let _`); `patches/bin/…` rebuilt.
+Also repaired while landing this: the patch Makefile's checkout probe broke
+with the cc-switch submodule move (now `git rev-parse --git-dir`, which
+handles plain checkouts and submodule gitfiles alike).
+
+### 15. Per-node keys never reached the wire — **high (routing)**
+
+Symptom: the mixed-type live leg answered **401** `Upstream request failed:
+Invalid credential` — and an offline HTTP sink proved the daemon sent the
+**junk provider token** (`Bearer sk-unused…`) upstream, not the route's node
+key. Route hit itself was fine: the request did land on the node URL with the
+per-model wire format; only the credential was wrong.
+
+Root cause ×2 in `forwarder.rs` (all introduced by the node-routing patch):
+the key-override block was gated on
+`auth.strategy == AuthStrategy::Anthropic`, while `extract_auth` derives the
+strategy from the **provider-level** api format (`openai_chat`/`openai_responses`
+map to `Bearer`, gemini-like to the Google strategies) — so the override
+almost never fired; and the gemini leg looked the model up from
+`filtered_body`, whose outbound gemini body carries the model in the **URL**,
+not the body — the lookup got `None`.
+
+Fix (2026-10-22): the override now applies to every *static-key* strategy
+(`Anthropic | ClaudeAuth | Bearer | Google | GoogleOAuth`; dynamic OAuth
+managers keep their placeholders), and the model is captured into
+`routed_model` from `mapped_body` *before* the format conversion moves
+`mapped_body` (an E0382 tried otherwise). Offline-sink regression
+`NodeKeyOverrideTests` pins: all three wire shapes carry the node key, the
+junk token never leaks.
+
+### 16. Multi-type responses fell back to raw pass-through — **high (routing)**
+
+Symptom: after #15, the live mixed leg returned the upstream **chat.completion
+unmodified** to the client — conversion simply never ran; Cloudflare's
+upstream headers rode along.
+
+Root cause in `handlers.rs`: the transform decision is
+`adapter.needs_transform(provider)` which reads the **provider-level** api
+format only; a multi-type provider falls back to `"anthropic"`, so
+`needs_transform == false` and the handler took the pass-through arm while the
+request side was happily converted by the per-model route.
+
+Fix (2026-10-22) ×2: `ClaudeAdapter::needs_transform` (`claude.rs`) now enters
+the transform handler for any provider declaring `settings_config.modelRoutes`;
+and the transform arm itself understands a per-model anthropic route —
+`(None, Some(response)) if api_format == "anthropic"` returns the response
+unchanged (before, an anthropic reply would have been fed to
+`openai_to_anthropic`). Sink regression `ResponseTransformTests` pins both:
+the openai_chat reply is converted back to an Anthropic message and the
+anthropic route passes through unchanged.
+
+### Cloudflare 403s are a header fingerprint, not routing — **note**
+
+While hunting #15/#16 the daemon's direct calls all received 403 challenge
+pages from opencode.ai's edge, while curl succeeded immediately. The daemon
+forwards the client's `User-Agent`; a browser-less UA (`Python-urllib/3.13`)
+gets challenged, `curl/8.5.0` passes 4/4, and the normal `claude-cli/…` UA the
+suite uses passed every live leg in the final 5/5 run. Environment behaviour
+of the upstream edge, not a routing defect — only worth re-checking if future
+clients send unusual UAs.
 
 ## Notes / non-defects
 
@@ -225,9 +322,10 @@ suite already does.
 
 ## Recommendations
 
-All defects listed above (#1–#12) are fixed — #1–#8 in `91c28a5`, #9–#12 in
-`a03bb31` — and every `expectedFailure` marker has been dropped (the tests
-are plain regression guards). Configuration trap 1 is also stripped
+All defects listed above are fixed — #1–#8 in `91c28a5`, #9–#12 in `a03bb31`,
+#14–#16 in the node-routing patch (2026-10-22, `patches/bin/…` rebuilt and
+sink-verified) — and every `expectedFailure` marker has been dropped (the
+tests are plain regression guards). Configuration trap 1 is also stripped
 automatically now, both on provider save (#12) and on import. Nothing
 outstanding.
 
@@ -235,7 +333,10 @@ outstanding.
 
 ```bash
 cd linux_switch/dd-switch
-.venv/bin/python -m unittest discover -s test_suite                    # whole suite
+.venv/bin/python -m unittest discover -s test_suite                                             # whole suite
+.venv/bin/python -m unittest test_suite.test_local_routing_opencode_e2e -v                      # multi-protocol node suite
+.venv/bin/python -m unittest test_suite.test_local_routing_opencode_e2e.NodeKeyOverrideTests     # offline #15 regression (tin sink)
+.venv/bin/python -m unittest test_suite.test_local_routing_opencode_e2e.ResponseTransformTests   # offline #16 regression (local sink)
 .venv/bin/python -m unittest test_suite.test_local_routing_e2e -v      # E2E only
 .venv/bin/python -m unittest test_suite.test_regressions -v            # defects only
 ```

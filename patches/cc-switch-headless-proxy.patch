@@ -105,10 +105,10 @@ index e00598dc..eb91c938 100644
          conn.execute("PRAGMA foreign_keys = ON;", [])
 diff --git a/src-tauri/src/headless.rs b/src-tauri/src/headless.rs
 new file mode 100644
-index 00000000..4e8d4a60
+index 00000000..28e4f4f9
 --- /dev/null
 +++ b/src-tauri/src/headless.rs
-@@ -0,0 +1,247 @@
+@@ -0,0 +1,253 @@
 +//! 无界面的本地路由守护进程（headless）。
 +//!
 +//! 复用桌面端同一套 `proxy` 引擎，但不启动 Tauri 窗口/托盘，适合在
@@ -202,6 +202,12 @@ index 00000000..4e8d4a60
 +pub async fn run(opts: HeadlessOptions) -> Result<(), String> {
 +    install_logger();
 +    crate::panic_hook::setup_panic_hook();
++
++    // rustls 需要进程级 CryptoProvider：GUI 端在 cc_switch_lib（lib.rs:466）
++    // 已经安装，headless 守护进程绕过了那套初始化——若在 anthropic 直通
++    // 路径上首次建立 rustls 客户端就会 panic（daemon 一响即崩）。
++    // 防御式 `let _` 与上游各处保持一致（重复安装是幂等的 no-op）。
++    let _ = rustls::crypto::ring::default_provider().install_default();
 +
 +    let db = match opts.db_path.as_deref() {
 +        Some(path) => Database::init_at(path),
@@ -1038,22 +1044,25 @@ index 00000000..38450f46
 +    }
 +}
 diff --git a/src-tauri/src/proxy/forwarder.rs b/src-tauri/src/proxy/forwarder.rs
-index aea53ada..d65106eb 100644
+index aea53ada..10f16801 100644
 --- a/src-tauri/src/proxy/forwarder.rs
 +++ b/src-tauri/src/proxy/forwarder.rs
-@@ -1698,6 +1698,19 @@ impl RequestForwarder {
+@@ -1698,6 +1698,22 @@ impl RequestForwarder {
                  }
              }
          }
 +        // 每模型节点覆盖（settings_config.modelRoutes/modelNodes）：命中节点带
 +        // url 就替换 base_url，写法与上方 Copilot 动态 endpoint 同型；供应商
 +        // 声明 isFullUrl 时保持原状（isFullUrl 分支只按 base_url 拼 URL）。
++        // routed_model 在此捕获（mapped_body 会被下游格式转换 move），供本处
++        // 与后面 key 覆盖两处 lookup 共用同一份模型名。
++        let routed_model = mapped_body
++            .get("model")
++            .and_then(|value| value.as_str())
++            .map(str::to_string);
 +        if adapter.name() == "Claude" && !is_full_url {
-+            if let Some(url) = super::model_route::lookup(
-+                provider,
-+                mapped_body.get("model").and_then(|value| value.as_str()),
-+            )
-+            .and_then(|matched| matched.base_url)
++            if let Some(url) = super::model_route::lookup(provider, routed_model.as_deref())
++                .and_then(|matched| matched.base_url)
 +            {
 +                base_url = url;
 +            }
@@ -1061,18 +1070,23 @@ index aea53ada..d65106eb 100644
          let resolved_claude_api_format = if adapter.name() == "Claude" {
              Some(
                  self.resolve_claude_api_format(provider, &mapped_body, is_copilot)
-@@ -2243,6 +2256,19 @@ impl RequestForwarder {
+@@ -2243,6 +2259,24 @@ impl RequestForwarder {
                  }
              }
  
 +            // 每模型节点 key 覆盖（settings_config.modelRoutes/modelNodes）：
-+            // 仅对普通 key 认证的 Claude 供应商生效，OAuth 策略的 token 由上方接管。
-+            if auth.strategy == AuthStrategy::Anthropic {
-+                if let Some(key) = super::model_route::lookup(
-+                    provider,
-+                    filtered_body.get("model").and_then(|value| value.as_str()),
-+                )
-+                .and_then(|matched| matched.api_key)
++            // 出站材料源自 auth.api_key 的静态 key 策略（Anthropic/ClaudeAuth/
++            // Bearer/Google，覆盖四种路由格式）由节点 key 接管；动态 OAuth 管理器
++            // （Copilot/Codex/xAI/GeminiCli OAuth）的 token 由上方接管。
++            if !matches!(
++                auth.strategy,
++                AuthStrategy::GitHubCopilot
++                    | AuthStrategy::CodexOAuth
++                    | AuthStrategy::XaiOAuth
++                    | AuthStrategy::GoogleOAuth
++            ) {
++                if let Some(key) = super::model_route::lookup(provider, routed_model.as_deref())
++                    .and_then(|matched| matched.api_key)
 +                {
 +                    auth.api_key = key;
 +                }
@@ -1081,7 +1095,7 @@ index aea53ada..d65106eb 100644
              for secret in std::iter::once(&auth.api_key).chain(auth.access_token.iter()) {
                  if !secret.is_empty() && !log_secrets.contains(secret) {
                      log_secrets.push(secret.clone());
-@@ -3146,6 +3172,15 @@ impl RequestForwarder {
+@@ -3146,6 +3180,15 @@ impl RequestForwarder {
          is_copilot: bool,
      ) -> String {
          if !is_copilot {
@@ -1097,6 +1111,20 @@ index aea53ada..d65106eb 100644
              return super::providers::get_claude_api_format(provider).to_string();
          }
  
+diff --git a/src-tauri/src/proxy/handlers.rs b/src-tauri/src/proxy/handlers.rs
+index 7be5869e..1e0e5879 100644
+--- a/src-tauri/src/proxy/handlers.rs
++++ b/src-tauri/src/proxy/handlers.rs
+@@ -763,6 +763,9 @@ async fn handle_claude_transform(
+     // 根据 api_format 选择非流式转换器
+     let transform_result = match (direct_anthropic_response, upstream_response) {
+         (Some(response), _) => Ok(response),
++        // 每模型路由的 anthropic 直通：路由把该模型解析回 anthropic 时响应
++        // 本身就是 Anthropic 消息，不能进 openai_to_anthropic 兜底。
++        (None, Some(response)) if api_format == "anthropic" => Ok(response),
+         (None, Some(response)) if api_format == "openai_responses" => {
+             transform_responses::responses_to_anthropic_with_web_search_options(
+                 response,
 diff --git a/src-tauri/src/proxy/mod.rs b/src-tauri/src/proxy/mod.rs
 index 4a8bfd41..951ad839 100644
 --- a/src-tauri/src/proxy/mod.rs
@@ -1111,10 +1139,10 @@ index 4a8bfd41..951ad839 100644
  pub mod providers;
 diff --git a/src-tauri/src/proxy/model_route.rs b/src-tauri/src/proxy/model_route.rs
 new file mode 100644
-index 00000000..e5ad59b1
+index 00000000..c89f57d1
 --- /dev/null
 +++ b/src-tauri/src/proxy/model_route.rs
-@@ -0,0 +1,160 @@
+@@ -0,0 +1,166 @@
 +//! 每模型传输覆盖（headless 补丁自有模块）。
 +//!
 +//! 数据存放在 `settings_config`（无类型 JSON）里，与 `env` 平级：
@@ -1155,6 +1183,12 @@ index 00000000..e5ad59b1
 +    pub base_url: Option<String>,
 +    /// 该模型使用的凭据（节点 key）。
 +    pub api_key: Option<String>,
++}
++
++/// 供应商是否声明了按模型路由表（`settings_config.modelRoutes`）。
++/// 表的存储键只在这里出现，模块外不要复述字符串。
++pub fn has_routes(provider: &Provider) -> bool {
++    provider.settings_config.get("modelRoutes").is_some()
 +}
 +
 +/// 依据请求模型名在 `settings_config.modelRoutes` / `modelNodes` 里查覆盖。
@@ -1275,6 +1309,27 @@ index 00000000..e5ad59b1
 +        assert!(lookup(&provider, None).is_none());
 +    }
 +}
+diff --git a/src-tauri/src/proxy/providers/claude.rs b/src-tauri/src/proxy/providers/claude.rs
+index 79569d3e..66cd1a29 100644
+--- a/src-tauri/src/proxy/providers/claude.rs
++++ b/src-tauri/src/proxy/providers/claude.rs
+@@ -962,10 +962,12 @@ impl ProviderAdapter for ClaudeAdapter {
+         // - "anthropic" (默认): 直接透传，无需转换
+         // - "openai_chat": 需要 Anthropic ↔ OpenAI Chat Completions 格式转换
+         // - "openai_responses": 需要 Anthropic ↔ OpenAI Responses API 格式转换
+-        matches!(
+-            self.get_api_format(provider),
+-            "openai_chat" | "openai_responses" | "gemini_native"
+-        )
++        // 每模型路由（settings_config.modelRoutes）：多类型供应商的格式是 per-model
++        // 的（forwarder.resolve_claude_api_format 已按请求模型解析），provider 级
++        // 格式兜底 anthropic 会把整条流降级成透传——所以只要声明了路由表就走
++        // 统一的响应处理，anthropic 路由在转换臂内直通。
++        crate::proxy::model_route::has_routes(provider)
++            || claude_api_format_needs_transform(self.get_api_format(provider))
+     }
+ 
+     fn transform_request(
 diff --git a/src-tauri/src/proxy_cli.rs b/src-tauri/src/proxy_cli.rs
 new file mode 100644
 index 00000000..1a9b0251

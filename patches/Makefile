@@ -26,7 +26,7 @@ BUILT_BIN     := $(BUILD_DIR)/src-tauri/target/release/cc-switch-proxy
 
 binary: check
 	@command -v cargo >/dev/null || { echo "error: cargo not found — install Rust (https://rustup.rs)"; exit 1; }
-	@test -d "$(CC_SWITCH_DIR)/.git" || { echo "error: $(CC_SWITCH_DIR) is not a git checkout (set CC_SWITCH_DIR)"; exit 1; }
+	@git -C "$(CC_SWITCH_DIR)" rev-parse --git-dir >/dev/null 2>&1 || { echo "error: $(CC_SWITCH_DIR) is not a git checkout (set CC_SWITCH_DIR)"; exit 1; }
 	rm -rf "$(BUILD_DIR)"
 	git -C "$(CC_SWITCH_DIR)" worktree add --detach "$(BUILD_DIR)" HEAD
 	git -C "$(BUILD_DIR)" apply "$(PATCH)"

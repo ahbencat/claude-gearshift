@@ -108,17 +108,21 @@ def _binary_usable():
     return proc.returncode == 0
 
 
-def _endpoint_reachable(timeout=10):
-    """True when the upstream host resolves and accepts TCP connections."""
-    if not TESTDATA:
-        return False
-    url = TESTDATA["end_point"]
+def _tcp_reachable(url, timeout=10):
+    """True when the host behind `url` accepts TCP connections on 443."""
     host = url.split("://", 1)[-1].split("/", 1)[0].split(":", 1)[0]
     try:
         with socket.create_connection((host, 443), timeout=timeout):
             return True
     except OSError:
         return False
+
+
+def _endpoint_reachable(timeout=10):
+    """True when the upstream host resolves and accepts TCP connections."""
+    if not TESTDATA:
+        return False
+    return _tcp_reachable(TESTDATA["end_point"], timeout)
 
 
 PROXY_AVAILABLE = _binary_usable()
@@ -160,12 +164,18 @@ def _sse_events(raw):
 
 
 class ProxyTestCase(unittest.TestCase):
-    """Base: throwaway DB + settings, real binary, real upstream."""
+    """Base: throwaway DB + settings, real binary, real upstream.
+
+    Subclasses narrow or widen the external-dependency gates via the class
+    flags below (e.g. the offline sink suites need only the binary).
+    """
+
+    REQUIRE_ENDPOINT = True  # 真实上游（test_data/.testdata）门；子类可关
 
     def setUp(self):
         if not PROXY_AVAILABLE:
             self.skipTest(f"cc-switch-proxy binary unusable: {PROXY_BIN}")
-        if not ENDPOINT_AVAILABLE:
+        if self.REQUIRE_ENDPOINT and not ENDPOINT_AVAILABLE:
             self.skipTest("upstream endpoint unreachable")
 
         self.tmp = tempfile.TemporaryDirectory()
@@ -194,7 +204,6 @@ class ProxyTestCase(unittest.TestCase):
 
         # The spawned daemon inherits the environment, so the GTK runtime libs
         # have to be visible to it as well.
-        self.env_patch = _patch(os, "environ", os.environ.copy())
         os.environ.update(_proxy_env())
 
         self.addCleanup(self._stop_route)
@@ -261,7 +270,7 @@ class ProxyTestCase(unittest.TestCase):
         return json.loads(self.settings.read_text(encoding="utf-8"))
 
     def anthropic_request(self, model="claude-sonnet-5", text="Say pong", stream=False,
-                          timeout=90, attempts=3):
+                          timeout=90, attempts=3, max_tokens=100):
         """Send a Claude-Code-shaped request through the proxy.
 
         The upstream is a live service, so a transient failure (a 5xx, a
@@ -273,7 +282,7 @@ class ProxyTestCase(unittest.TestCase):
         for attempt in range(attempts):
             try:
                 raw, content_type = self._anthropic_request_once(
-                    model, text, stream, timeout
+                    model, text, stream, timeout, max_tokens
                 )
                 if not stream and '"error"' in raw[:200]:
                     raise AssertionError(f"proxy relayed an error payload: {raw[:200]}")
@@ -285,10 +294,10 @@ class ProxyTestCase(unittest.TestCase):
         raise last_error
 
     def _anthropic_request_once(self, model="claude-sonnet-5", text="Say pong",
-                                 stream=False, timeout=90):
+                                 stream=False, timeout=90, max_tokens=100):
         body = {
             "model": model,
-            "max_tokens": 100,
+            "max_tokens": max_tokens,
             "messages": [{"role": "user", "content": text}],
         }
         if stream:
@@ -299,6 +308,7 @@ class ProxyTestCase(unittest.TestCase):
             headers={
                 "Content-Type": "application/json",
                 "x-api-key": app.ROUTE_TOKEN_PLACEHOLDER,
+                "anthropic-version": "2023-06-01",
                 "user-agent": "claude-cli/2.0.0",
             },
         )
@@ -306,6 +316,21 @@ class ProxyTestCase(unittest.TestCase):
             raw = resp.read().decode("utf-8")
             content_type = resp.headers.get("Content-Type", "")
         return raw, content_type
+
+    def _single_request(self, model, **kwargs):
+        """One request without the retry wrapper — errors stay observable."""
+        try:
+            return self._anthropic_request_once(model, **kwargs)
+        except urllib.error.HTTPError as exc:
+            return exc.read().decode("utf-8", "replace"), f"error-{exc.code}"
+        except Exception as exc:  # noqa: BLE001 - the payload is asserted below
+            return json.dumps({"error": str(exc)}), "error"
+
+    def _parsed(self, raw):
+        try:
+            return json.loads(raw)
+        except ValueError:
+            return None
 
 
 def _patch(obj, name, value):
@@ -597,21 +622,6 @@ class PerModelRouteTests(ProxyTestCase):
       sends (the live upstream cannot discriminate: both formats convert
       back into an Anthropic `type:"message"`, and both were observed live).
     """
-
-    def _single_request(self, model):
-        """One request without the retry wrapper — errors stay observable."""
-        try:
-            return self._anthropic_request_once(model)
-        except urllib.error.HTTPError as exc:
-            return exc.read().decode("utf-8", "replace"), f"error-{exc.code}"
-        except Exception as exc:  # noqa: BLE001 - the payload is asserted below
-            return json.dumps({"error": str(exc)}), "error"
-
-    def _parsed(self, raw):
-        try:
-            return json.loads(raw)
-        except ValueError:
-            return None
 
     def test_a_routed_model_diverts_to_its_node_url_and_recovers(self):
         self.add_provider(set_current=True)
