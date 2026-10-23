@@ -277,8 +277,17 @@ restart `cc-switch-proxy` after `set`/`clear` for it to take effect
 - The binary still links Tauri/WebKitGTK runtime libraries (it shares the crate
   with the desktop app), so a headless host needs the WebKitGTK runtime installed
   to *run* it — and the full Tauri Linux build prerequisites to compile it.
-- No Tauri `AppHandle` is available, so failover UI events and Copilot/Codex/xAI
-  OAuth state are unavailable; plain Anthropic/OpenAI/Gemini routing is unaffected.
+- **OAuth providers are unusable headless (confirmed in code).** The daemon
+  passes `None` as `AppHandle` (`ProxyServer::new(config, db.clone(), None)`),
+  so the Copilot / CodexOAuth / XaiOAuth strategies hit their `else` arm and
+  fail every request with `AuthError` (`forwarder.rs`: Copilot, Codex, XAI
+  branches). GeminiCliOAuth degrades further: the key field must hold OAuth
+  JSON with a *live* `access_token`, and no refresh path exists in either
+  mode. Trap: such providers can still be added/imported and set current
+  with no warning — the failure only surfaces as request-time 401/AuthError.
+  Only static API-key providers (Anthropic, OpenAI-compatible, Gemini API,
+  OpenRouter, …) work headless; plain Anthropic/OpenAI/Gemini routing is
+  otherwise unaffected. Failover UI events are likewise unavailable.
 
 ### Regenerating
 

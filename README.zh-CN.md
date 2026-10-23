@@ -45,7 +45,7 @@ python3 app.py
 - 生产模式 waitress；`DD_SWITCH_DEBUG=1` 时走 Flask dev server
 - 页面可直接查看 / 新建 / 编辑 / 删除 / 切换 `config/` 下的配置
 - 右上角 中/EN 语言切换（记忆选择）
-- 可选的**本地路由**有独立配置页：管理供应商（存在 cc-switch 的库里）、启停 `cc-switch-proxy` 网关，并应用到 Claude Code——见[本地路由](#本地路由cc-switch-proxy可选)
+- 可选的**本地路由**有独立配置页：管理供应商（存在 cc-switch 的库里）、启停 `cc-switch-proxy` 网关——开启即一步指向 Claude Code，无独立的应用动作——见[本地路由](#本地路由cc-switch-proxy可选)
 
 ### 多服务器 SSH 支持
 
@@ -97,10 +97,10 @@ Web UI **全程密码保护** —— 每个页面、每个 API 接口都必须�
 > **现状：✅ 整体已通，待优化逻辑。** `dd-switch/test_suite/test_local_routing_e2e.py`
 > 用**真实** `cc-switch-proxy` 二进制对着**真实**上游（`../../test_data/.testdata`）
 > 验证：OpenAI-Chat 协议转换（非流式 + SSE 流式）、供应商 CRUD、以及
-> 启动 → 应用 → 跑流量 → 停止生命周期 全部通过。按模型路由也做了实测——被分流模型
+> 开启 → 跑流量 → 关闭生命周期 全部通过。按模型路由也做了实测——被分流模型
 > 打到死节点 URL 会失败而不回落默认接入点，改成只带 format 的路由即恢复；模型路由的
 > format 决定上游路径（`/v1/responses` 或 `/v1/chat/completions`，用本机记录型 sink
-> 验证）。应用只写两个网络分派键——模型名由用户自己负责。前置条件缺失（无二进制、
+> 验证）。开启即写两个网络分派键——模型名由用户自己负责。前置条件缺失（无二进制、
 > 无 WebKitGTK 运行库、无接入点）时自动跳过。详见
 > [`TEST-REPORT.md`](TEST-REPORT.md)。
 > 导入的配置文件里写顶层 `"api_format"`，在 `provider import` 时同样被识别。
@@ -152,14 +152,16 @@ Web UI **全程密码保护** —— 每个页面、每个 API 接口都必须�
    浏览器所在设备（如 Windows）上的 `*.json` 配置文件导入——不读服务器的
    `config/`。选一个作为当前供应商。以后换供应商只要一步——把另一个设为当前，
    代理下个请求即生效，无需重启。
-2. **开启路由** —— dd-switch 拉起 `cc-switch-proxy --db … --port 9301`
-   （仅回环；普通子进程，不是服务），等待 `/health` 就绪，并快照
-   `~/.claude/settings.json` 里受管的 `env` 键。
-3. **应用** —— 只作用于当前已生效的配置（其他配置一概不动）：只写两个网络分派键
-   —— `ANTHROPIC_BASE_URL=http://127.0.0.1:9301` 与占位凭据 `PROXY_MANAGED`。
+2. **开启路由** —— 一步到位，无独立的应用动作：dd-switch 拉起
+   `cc-switch-proxy --db … --port 9301`（仅回环；普通子进程，不是服务），
+   等待 `/health` 就绪，快照 `~/.claude/settings.json` 里受管的 `env` 键，
+   然后把 Claude Code 指向网关——只写两个网络分派键
+   `ANTHROPIC_BASE_URL=http://127.0.0.1:9301` 与占位凭据 `PROXY_MANAGED`，
+   只作用于当前已生效的配置（其他配置一概不动）。
    模型名（`ANTHROPIC_MODEL` / `ANTHROPIC_DEFAULT_*_MODEL`）由你自己在
-   settings.json 里写，应用不碰它们。`env` 里的其他键和所有非 `env` 字段一概不动。
-4. **关闭路由** —— 从快照恢复受管的键，然后结束进程组。恢复失败会保留状态以便重试。
+   settings.json 里写，开启不碰它们。`env` 里的其他键和所有非 `env` 字段一概不动。
+   `config/` 下的独立配置档都是直连用途，路由不会动它们。
+3. **关闭路由** —— 从快照恢复受管的键，然后结束进程组。恢复失败会保留状态以便重试。
 
 **配置** —— 全部设置都在 dd-switch 的 `EnvironmentFile`
 （`~/.config/systemd/user/dd-switch.env`，权限 0600），不写死任何东西：
@@ -187,7 +189,8 @@ systemctl --user restart dd-switch
 
 > **OAuth 限制**：走登录授权的供应商（GitHub Copilot、ChatGPT/Codex、xAI）只能在
 > cc-switch **桌面端**里用——headless 守护进程没有 `AppHandle`，只支持 API Key 类
-> 供应商（Anthropic、OpenAI 兼容、Gemini、OpenRouter 等）。
+> 供应商（Anthropic、OpenAI 兼容、Gemini、OpenRouter 等）。已按代码确认：这类
+> 供应商照样能添加/设为当前（添加时不告警），但每个请求都在鉴权处失败。
 
 **说明与限制**
 

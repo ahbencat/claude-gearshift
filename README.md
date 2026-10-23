@@ -51,7 +51,7 @@ Requires `flask` + `waitress` + `paramiko` + `cryptography` — `pip install fla
 - Production mode serves via waitress; `DD_SWITCH_DEBUG=1` falls back to Flask's dev server
 - Browse / create / edit / delete / switch configs under `config/` right from the page
 - 中/EN language toggle in the top-right corner (your choice is remembered)
-- Optional **local routing** with its own config page: manage providers (stored in cc-switch's DB), start/stop the `cc-switch-proxy` gateway, and apply it to Claude Code — see [Local Routing](#local-routing-cc-switch-proxy-optional)
+- Optional **local routing** with its own config page: manage providers (stored in cc-switch's DB) and start/stop the `cc-switch-proxy` gateway — starting points Claude Code at it in one step, no separate apply — see [Local Routing](#local-routing-cc-switch-proxy-optional)
 
 ### Multi-Server SSH Support
 
@@ -109,11 +109,11 @@ SQLite database.
 > drives the **real** `cc-switch-proxy` binary against a **live** upstream
 > (`../../test_data/.testdata`): OpenAI-Chat protocol relay (non-streaming +
 > SSE streaming), provider CRUD and the
-> start → apply → traffic → stop lifecycle all pass. Per-model routing is
+> start → traffic → stop lifecycle all pass. Per-model routing is
 > verified live too — a model routed to a node with a dead URL fails instead
 > of falling back, recovers on a format-only route, and a routed model's
 > format selects the upstream path (`/v1/responses` vs `/v1/chat/completions`,
-> proven against a recording localhost sink). Apply writes only the two
+> proven against a recording localhost sink). Starting writes only the two
 > dispatch keys — model names stay the user's own. Prerequisites missing
 > (no binary, no WebKitGTK runtime libs, no endpoint) ⇒ the suite skips.
 > Details in [`TEST-REPORT.md`](TEST-REPORT.md). A top-level `"api_format"` in
@@ -177,17 +177,19 @@ points) is mapped file-by-file in
    picker — the server's `config/` is not involved. Pick one as current. Switching providers
    later is one step — set another as current and the router picks it up on
    the next request, no restart.
-2. **Start routing** — dd-switch spawns `cc-switch-proxy --db … --port 9301`
-   (loopback-only; a plain child process, not a service), waits for `/health`,
-   and snapshots the managed `env` keys from `~/.claude/settings.json`.
-3. **Apply** — applies to the currently active config only (no other profile
-   is touched): it writes only the two dispatch keys —
+2. **Start routing** — one action, no separate apply: dd-switch spawns
+   `cc-switch-proxy --db … --port 9301` (loopback-only; a plain child
+   process, not a service), waits for `/health`, snapshots the managed
+   `env` keys from `~/.claude/settings.json`, then points Claude Code at
+   the gateway — writing only the two dispatch keys,
    `ANTHROPIC_BASE_URL=http://127.0.0.1:9301` and the `PROXY_MANAGED`
-   placeholder token. Model names (`ANTHROPIC_MODEL` /
-   `ANTHROPIC_DEFAULT_*_MODEL`) are yours to write in settings.json; apply
+   placeholder token. Applies to the currently active config only (no other
+   profile is touched). Model names (`ANTHROPIC_MODEL` /
+   `ANTHROPIC_DEFAULT_*_MODEL`) are yours to write in settings.json; start
    never touches them. Everything else in
-   `env` and every non-`env` field is left alone.
-4. **Stop routing** — the managed keys are restored from the snapshot, then the
+   `env` and every non-`env` field is left alone. Standalone profiles under
+   `config/` stay direct-connect and are never touched by routing.
+3. **Stop routing** — the managed keys are restored from the snapshot, then the
    process group is terminated. A failed restore keeps the state so the
    operation can be retried.
 
@@ -218,7 +220,8 @@ systemctl --user restart dd-switch
 > **OAuth limit**: login-based providers (GitHub Copilot, ChatGPT/Codex, xAI) only
 > work through the cc-switch **desktop** app — the headless daemon has no
 > `AppHandle`, so only API-key providers (Anthropic, OpenAI-compatible, Gemini,
-> OpenRouter, …) work.
+> OpenRouter, …) work. Confirmed in code: such providers can still be added
+> and set current with no warning, but every request fails at auth.
 
 **Notes and limits**
 

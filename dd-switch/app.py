@@ -272,8 +272,9 @@ ROUTE_STOP_TIMEOUT = 10   # SIGTERM 后等待进程退出的秒数
 ROUTE_TOKEN_PLACEHOLDER = "PROXY_MANAGED"
 
 # 本功能快照/恢复的 env 键；其余 env 与非 env 字段一概不动。
-# apply 只写前两个；模型名键（ANTHROPIC_MODEL / *_DEFAULT_*_MODEL）由用户自理，
-# 保留在快照里只是让开启前的既有值无论何时都能原样恢复。
+# 开启时只写前两个（开启即应用，无独立 apply 步骤）；模型名键
+# （ANTHROPIC_MODEL / *_DEFAULT_*_MODEL）由用户自理，保留在快照里只是让
+# 开启前的既有值无论何时都能原样恢复。
 MANAGED_ENV_KEYS = [
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_AUTH_TOKEN",
@@ -761,13 +762,27 @@ def route_status():
         "supported": route_supported(),
         "missing": route_missing_config(),
         "active": active,
-        "applied": bool(state.get("applied")) if active else False,
         "running": running,
         "provider": state.get("provider") if active else None,
     }
 
 
+def _point_settings_at_gateway():
+    """开启即应用：备份后把两个网络分派键指向网关（模型名键不动）。"""
+    current = read_json(CLAUDE_CONFIG) if CLAUDE_CONFIG.exists() else {}
+    _backup_settings()
+    settings = dict(current)
+    _apply_route_env(settings)
+    write_json_atomic(CLAUDE_CONFIG, settings)
+
+
 def route_start():
+    """开启本地路由：拉起网关进程，并一步把 Claude Code 指向网关。
+
+    开启即应用，没有独立的 apply 步骤：快照受管 env 键之后，直接把
+    ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN 写成网关指向 + 占位凭据。
+    模型名键用户自理（只快照、不改写）。独立配置文件（config/*.json）
+    都是直连用途，不参与路由。"""
     if not route_supported():
         raise RouteError("本地路由功能未启用或缺少配置")
 
@@ -779,7 +794,7 @@ def route_start():
     if state is not None:
         if _route_process_alive(state.get("pid")):
             raise RouteError("本地路由已处于启用状态")
-        # 进程已退出（例如重启过主机）：只重新拉起进程，不重做快照
+        # 进程已退出（例如重启过主机）：复用已有快照，只重拉进程并重写指向
         pid = _spawn_route()
         try:
             _wait_route_ready(pid)
@@ -787,7 +802,9 @@ def route_start():
             _stop_route_process(pid)
             raise
         state["pid"] = pid
+        state["provider"] = providers.get("current")
         _write_route_state(state)
+        _point_settings_at_gateway()
         return {"provider": state.get("provider")}
 
     pid = _spawn_route()
@@ -801,15 +818,15 @@ def route_start():
     current = read_json(CLAUDE_CONFIG) if CLAUDE_CONFIG.exists() else {}
     env = current.get("env") or {}
     state = {
-        "version": 2,
+        "version": 3,
         "started_at": int(time.time()),
         "pid": pid,
-        "applied": False,
         "provider": providers.get("current"),
         "env_existed": "env" in current,
         "original_env": _snapshot_managed_env(env),
     }
     _write_route_state(state)
+    _point_settings_at_gateway()
     return {"provider": state.get("provider")}
 
 
@@ -820,37 +837,14 @@ def _spawn_route():
         raise RouteError(f"启动 cc-switch-proxy 失败: {e}")
 
 
-def route_apply():
-    state = _route_state()
-    if state is None:
-        raise RouteError("本地路由未启用")
-    if not _route_process_alive(state.get("pid")):
-        raise RouteError("cc-switch-proxy 进程未运行，请重新开启路由")
-
-    providers = _proxy_cli(["list"])
-    current = providers.get("current")
-    if not current:
-        raise RouteError("当前没有选中的供应商，无法应用")
-
-    current = read_json(CLAUDE_CONFIG) if CLAUDE_CONFIG.exists() else {}
-    _backup_settings()
-    settings = dict(current)
-    _apply_route_env(settings)
-    write_json_atomic(CLAUDE_CONFIG, settings)
-
-    state["applied"] = True
-    state["provider"] = providers.get("current")
-    _write_route_state(state)
-    return {"provider": state["provider"]}
-
-
 def route_stop():
     state = _route_state()
     if state is None:
         raise RouteError("本地路由未启用")
 
-    # 先恢复 settings，成功后才结束进程/删状态，失败可原样重试
-    if state.get("applied") and CLAUDE_CONFIG.exists():
+    # 先恢复 settings（开启即应用，关闭必恢复），成功后才结束进程/删状态，
+    # 失败保留状态可原样重试
+    if CLAUDE_CONFIG.exists():
         current = read_json(CLAUDE_CONFIG)
         _backup_settings()
         restored = dict(current)
@@ -1180,18 +1174,6 @@ def api_route_start():
             return jsonify({"error": str(e)}), 400
         except Exception as e:
             return jsonify({"error": f"开启路由失败: {e}"}), 500
-
-
-@app.route("/api/route/apply", methods=["POST"])
-@login_required
-def api_route_apply():
-    with _route_lock:
-        try:
-            return jsonify(route_apply())
-        except RouteError as e:
-            return jsonify({"error": str(e)}), 400
-        except Exception as e:
-            return jsonify({"error": f"应用路由失败: {e}"}), 500
 
 
 @app.route("/api/route/stop", methods=["POST"])

@@ -127,8 +127,10 @@ class StartTests(RouteTestCase):
         self.assertEqual(state["provider"], "relay")
         self.assertTrue(state["original_env"]["ANTHROPIC_AUTH_TOKEN"]["present"])
         self.assertEqual(state["original_env"]["ANTHROPIC_AUTH_TOKEN"]["value"], "orig")
-        # 开启路由本身不碰 settings.json
-        self.assertEqual(self.read_settings()["env"]["ANTHROPIC_AUTH_TOKEN"], "orig")
+        # 开启即应用：settings.json 已指向网关，真 key 只留在快照里
+        env = self.read_settings()["env"]
+        self.assertEqual(env["ANTHROPIC_BASE_URL"], app.ROUTE_BASE_URL)
+        self.assertEqual(env["ANTHROPIC_AUTH_TOKEN"], app.ROUTE_TOKEN_PLACEHOLDER)
 
     def test_start_without_current_provider_fails(self):
         self.proxy_cli_mock.return_value = {"app": "claude", "current": None, "providers": []}
@@ -149,9 +151,9 @@ class StartTests(RouteTestCase):
         self.assertEqual(self.proxy.starts, 2)
 
 
-class ApplyTests(RouteTestCase):
-    def test_apply_writes_gateway_pointing_only(self):
-        # 模型名归用户管：apply 只写两个网络分派键，用户自己写的模型键原样保留
+class StartWritesPointingTests(RouteTestCase):
+    def test_start_writes_gateway_pointing_only(self):
+        # 模型名归用户管：开启即写两个网络分派键，用户自己写的模型键原样保留
         self.write_settings({
             "env": {
                 "FOO": "bar",
@@ -161,7 +163,6 @@ class ApplyTests(RouteTestCase):
             "theme": "dark",
         })
         app.route_start()
-        app.route_apply()
 
         data = self.read_settings()
         env = data["env"]
@@ -175,16 +176,11 @@ class ApplyTests(RouteTestCase):
         self.assertEqual(env["FOO"], "bar")
         self.assertEqual(data["theme"], "dark")
 
-    def test_apply_without_routing_fails(self):
-        with self.assertRaises(app.RouteError):
-            app.route_apply()
-
 
 class StopTests(RouteTestCase):
     def test_stop_restores_env_and_stops_process(self):
         self.write_settings({"env": {"ANTHROPIC_AUTH_TOKEN": "orig", "FOO": "bar"}})
         app.route_start()
-        app.route_apply()
         app.route_stop()
 
         env = self.read_settings()["env"]
@@ -197,6 +193,18 @@ class StopTests(RouteTestCase):
     def test_stop_without_state_fails(self):
         with self.assertRaises(app.RouteError):
             app.route_stop()
+
+    def test_stop_after_respawn_still_restores(self):
+        # 进程死后重开：复用快照并重写指向；关闭仍能按快照恢复（旧 applied
+        # 门控下这条路径会漏恢复）
+        self.write_settings({"env": {"ANTHROPIC_AUTH_TOKEN": "orig"}})
+        app.route_start()
+        self.proxy.alive = False
+        app.route_start()
+        env = self.read_settings()["env"]
+        self.assertEqual(env["ANTHROPIC_AUTH_TOKEN"], app.ROUTE_TOKEN_PLACEHOLDER)
+        app.route_stop()
+        self.assertEqual(self.read_settings()["env"]["ANTHROPIC_AUTH_TOKEN"], "orig")
 
 
 class ProviderCliTests(RouteTestCase):

@@ -14,10 +14,10 @@ What is covered:
 * per-model routing (``--model-nodes`` / ``--model-routes``): a routed model
   must honor its node's URL/format, and a format-only route must switch the
   wire protocol on live traffic
-* the full dd-switch lifecycle: ``route_start`` → ``route_apply`` → traffic →
-  ``route_stop`` restoring the original ``~/.claude/settings.json``
-  (apply writes only the gateway Base URL + placeholder token — model names
-  stay the user's own)
+* the full dd-switch lifecycle: ``route_start`` → traffic → ``route_stop``
+  restoring the original ``~/.claude/settings.json`` (starting points
+  settings at the gateway at once — no separate apply step — writing only
+  the gateway Base URL + placeholder token; model names stay the user's own)
 
 The endpoint is read from ``test_data/.testdata``::
 
@@ -257,9 +257,6 @@ class ProxyTestCase(unittest.TestCase):
                     pass
                 time.sleep(2)
         raise last_error
-
-    def apply_route(self):
-        return app.route_apply()
 
     def stop_route(self):
         result = app.route_stop()
@@ -523,9 +520,9 @@ class ProtocolRelayTests(ProxyTestCase):
 
 
 class DdSwitchLifecycleTests(ProxyTestCase):
-    """The full dd-switch flow: start → apply → traffic → stop."""
+    """The full dd-switch flow: start (points at the gateway) → traffic → stop."""
 
-    def test_apply_writes_the_gateway_pointing_only(self):
+    def test_start_writes_the_gateway_pointing_only(self):
         self.add_provider()
         self.settings.write_text(
             json.dumps({"env": {"ANTHROPIC_AUTH_TOKEN": "orig", "FOO": "bar",
@@ -534,13 +531,12 @@ class DdSwitchLifecycleTests(ProxyTestCase):
             encoding="utf-8",
         )
         self.start_route()
-        self.apply_route()
 
         data = self.read_settings()
         env = data["env"]
         self.assertEqual(env["ANTHROPIC_BASE_URL"], self.base_url)
         self.assertEqual(env["ANTHROPIC_AUTH_TOKEN"], app.ROUTE_TOKEN_PLACEHOLDER)
-        # Model names belong to the user now — untouched by apply, no aliases.
+        # Model names belong to the user now — untouched by start, no aliases.
         self.assertEqual(env["ANTHROPIC_DEFAULT_SONNET_MODEL"], "user-own-model")
         self.assertNotIn("ANTHROPIC_DEFAULT_HAIKU_MODEL", env)
         self.assertNotIn("ANTHROPIC_DEFAULT_OPUS_MODEL", env)
@@ -548,11 +544,10 @@ class DdSwitchLifecycleTests(ProxyTestCase):
         self.assertEqual(env["FOO"], "bar")
         self.assertEqual(data["theme"], "dark")
 
-    def test_traffic_flows_through_the_applied_gateway(self):
+    def test_traffic_flows_through_the_gateway(self):
         self.add_provider()
         self.settings.write_text(json.dumps({"env": {}}), encoding="utf-8")
         self.start_route()
-        self.apply_route()
 
         # The settings now point Claude Code at the local gateway.
         self.assertEqual(self.read_settings()["env"]["ANTHROPIC_BASE_URL"], self.base_url)
@@ -568,7 +563,6 @@ class DdSwitchLifecycleTests(ProxyTestCase):
         self.settings.write_text(json.dumps(original), encoding="utf-8")
 
         self.start_route()
-        self.apply_route()
         self.stop_route()
 
         self.assertEqual(self.read_settings(), original)
@@ -578,7 +572,6 @@ class DdSwitchLifecycleTests(ProxyTestCase):
         self.settings.write_text(json.dumps({"env": {"FOO": "bar"}}), encoding="utf-8")
 
         self.start_route()
-        self.apply_route()
         self.assertIn("ANTHROPIC_BASE_URL", self.read_settings()["env"])
 
         self.stop_route()
@@ -598,14 +591,13 @@ class DdSwitchLifecycleTests(ProxyTestCase):
         self.stop_route()
         self.assertFalse(state_file.exists())
 
-    def test_a_backup_of_the_settings_is_written_on_apply(self):
+    def test_a_backup_of_the_settings_is_written_on_start(self):
         self.add_provider()
         self.settings.write_text(json.dumps({"env": {"FOO": "bar"}}), encoding="utf-8")
         self.start_route()
-        self.apply_route()
 
         backups = list(self.root.glob("settings.json.bak.*"))
-        self.assertTrue(backups, "apply should back up settings.json first")
+        self.assertTrue(backups, "start should back up settings.json first")
 
 
 class PerModelRouteTests(ProxyTestCase):
