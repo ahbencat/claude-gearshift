@@ -31,9 +31,9 @@
   .sidebar {
     width: 300px; min-width: 300px; background: var(--surface);
     border-right: 1px solid var(--border); display: flex; flex-direction: column;
+    overflow-y: auto;
   }
-  .side-section { border-bottom: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
-  .side-section.grow { flex: 1; }
+  .side-section { border-bottom: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; flex-shrink: 0; }
   .side-head {
     padding: 10px 12px; display: flex; justify-content: space-between; align-items: center;
     cursor: pointer; user-select: none; font-size: 14px; font-weight: 600;
@@ -211,7 +211,7 @@
 <div class="container">
   <!-- sidebar：三个可伸缩区块：配置文件 → 本地路由 → 服务器 -->
   <div class="sidebar">
-    <div class="side-section grow">
+    <div class="side-section">
       <div class="side-head" onclick="toggleSection('secConfig')">
         <span>📁 <span data-i18n="configFiles">配置文件</span></span>
         <span style="display:flex;gap:6px;align-items:center">
