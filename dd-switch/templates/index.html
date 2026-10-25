@@ -32,11 +32,22 @@
     width: 300px; min-width: 300px; background: var(--surface);
     border-right: 1px solid var(--border); display: flex; flex-direction: column;
   }
-  .sidebar-header {
-    padding: 12px 16px; border-bottom: 1px solid var(--border);
-    display: flex; justify-content: space-between; align-items: center;
+  .side-section { border-bottom: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
+  .side-section.grow { flex: 1; }
+  .side-head {
+    padding: 10px 12px; display: flex; justify-content: space-between; align-items: center;
+    cursor: pointer; user-select: none; font-size: 14px; font-weight: 600;
   }
-  .sidebar-header h2 { font-size: 14px; font-weight: 600; }
+  .side-head:hover { background: rgba(99,102,241,.06); }
+  .side-head .plain-btn {
+    background: none; border: none; cursor: pointer; padding: 2px 4px;
+    border-radius: 4px; font-size: 13px; color: var(--muted); line-height: 1;
+  }
+  .side-head .plain-btn:hover { background: rgba(255,255,255,.08); color: var(--text); }
+  .side-caret { color: var(--muted); font-size: 12px; }
+  .side-body { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }
+  .side-body.collapsed { display: none; }
+  .side-body.cap { max-height: 32vh; }
   .config-list { flex: 1; overflow-y: auto; padding: 8px; }
   .config-item {
     padding: 10px 12px; border-radius: var(--radius); cursor: pointer;
@@ -174,12 +185,6 @@
     border: 1px solid var(--border); background: transparent; color: var(--text);
     font-size: 12px; cursor: pointer;
   }
-  .server-select {
-    padding: 6px 10px; border-radius: var(--radius);
-    border: 1px solid var(--border); background: #13142a; color: var(--text);
-    font-size: 12px; cursor: pointer; width: 100%;
-  }
-  .server-select:focus { outline: none; border-color: var(--accent); }
   .server-badge {
     font-size: 10px; padding: 1px 6px; border-radius: 999px; font-weight: 500;
     background: rgba(99,102,241,.15); color: var(--accent);
@@ -204,36 +209,55 @@
 </header>
 
 <div class="container">
-  <!-- sidebar -->
+  <!-- sidebar：三个可伸缩区块：配置文件 → 本地路由 → 服务器 -->
   <div class="sidebar">
-    <div class="sidebar-header">
-      <h2 data-i18n="configFiles">配置文件</h2>
-      <button class="btn btn-sm btn-primary" onclick="openNewConfig()" data-i18n="addNew">+ 新增</button>
-    </div>
-    <div style="padding:8px 12px;border-bottom:1px solid var(--border)">
-      <select class="server-select" id="serverSelect" onchange="onServerChange()" style="width:100%">
-        <option value="local" data-i18n="localServer">本地服务器</option>
-      </select>
-      <button class="btn btn-sm" id="btnManageServers" onclick="selectServers()" style="width:100%;margin-top:6px" data-i18n="manageServers">管理服务器</button>
-    </div>
-    <div style="padding:8px;border-bottom:1px solid var(--border)">
-      <div class="config-item" id="currentConfigEntry" onclick="showCurrentConfig()" style="margin-bottom:0">
-        <span class="name">📍 <span data-i18n="sidebarCurrentConfig">当前配置</span></span>
+    <div class="side-section grow">
+      <div class="side-head" onclick="toggleSection('secConfig')">
+        <span>📁 <span data-i18n="configFiles">配置文件</span></span>
+        <span style="display:flex;gap:6px;align-items:center">
+          <button class="btn btn-sm btn-primary" onclick="event.stopPropagation();openNewConfig()" data-i18n="addNew">+ 新增</button>
+          <span class="side-caret" id="caret-secConfig">▾</span>
+        </span>
       </div>
-    </div>
-    <div id="routeSidebar" style="display:none;padding:8px 0;border-bottom:1px solid var(--border)">
-      <div style="padding:0 8px 4px">
-        <div class="config-item" id="routeHomeEntry" onclick="selectRouteHome()" style="margin-bottom:0">
-          <span class="name">🔀 <span data-i18n="sidebarRouteBlock">本地路由</span></span>
-          <span class="actions">
-            <button onclick="event.stopPropagation();openNewProvider()" data-i18n-title="routeAddProvider" title="添加供应商">＋</button>
-          </span>
+      <div class="side-body" id="secConfig">
+        <div style="padding:8px 8px 0">
+          <div class="config-item" id="currentConfigEntry" onclick="showCurrentConfig()" style="margin-bottom:0">
+            <span class="name">📍 <span data-i18n="sidebarCurrentConfig">当前配置</span></span>
+          </div>
+        </div>
+        <div class="config-list" id="configList">
+          <div class="empty" data-i18n="loading">加载中...</div>
         </div>
       </div>
-      <div id="routeSidebarList" style="padding:0 4px"></div>
     </div>
-    <div class="config-list" id="configList">
-      <div class="empty" data-i18n="loading">加载中...</div>
+    <div class="side-section" id="routeSection" style="display:none">
+      <div class="side-head" onclick="toggleSection('secRoute')">
+        <span>🔀 <span data-i18n="sidebarRouteBlock">本地路由</span></span>
+        <span style="display:flex;gap:6px;align-items:center">
+          <button class="plain-btn" onclick="event.stopPropagation();openNewProvider()" data-i18n-title="routeAddProvider" title="添加供应商">＋</button>
+          <span class="side-caret" id="caret-secRoute">▾</span>
+        </span>
+      </div>
+      <div class="side-body cap" id="secRoute">
+        <div style="padding:4px 8px 0">
+          <div class="config-item" id="routeHomeEntry" onclick="selectRouteHome()" style="margin-bottom:0">
+            <span class="name">🔀 <span data-i18n="sidebarRouteBlock">本地路由</span></span>
+          </div>
+        </div>
+        <div id="routeSidebarList" style="padding:4px"></div>
+      </div>
+    </div>
+    <div class="side-section">
+      <div class="side-head" onclick="toggleSection('secServers')">
+        <span>🖥️ <span data-i18n="servers">服务器</span></span>
+        <span class="side-caret" id="caret-secServers">▾</span>
+      </div>
+      <div class="side-body cap" id="secServers">
+        <div id="serverSidebarList" style="padding:4px 8px 0"></div>
+        <div style="padding:4px 8px 8px">
+          <button class="btn btn-sm" id="btnManageServers" onclick="selectServers()" style="width:100%" data-i18n="manageServers">管理服务器</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -520,7 +544,7 @@ let routeTabAvailable = false; // 只有本地服务器且路由面板可用时�
 
 function syncRouteTab(isLocal) {
   routeTabAvailable = isLocal;
-  document.getElementById("routeSidebar").style.display = isLocal ? "block" : "none";
+  document.getElementById("routeSection").style.display = isLocal ? "flex" : "none";
   if (!isLocal) {
     // 路由不可用（远程服务器 / 面板缺失）时不保留路由相关选中态
     if (selectedItem && selectedItem.kind === "provider") selectedItem = null;
@@ -530,6 +554,36 @@ function syncRouteTab(isLocal) {
     renderRouteSidebar();
   }
   renderRouteEntry();
+}
+
+// 左栏三区块伸缩：状态记 localStorage，下次打开保持
+function toggleSection(id) {
+  const body = document.getElementById(id);
+  if (!body) return;
+  const collapsed = body.classList.toggle("collapsed");
+  const caret = document.getElementById("caret-" + id);
+  if (caret) caret.textContent = collapsed ? "▸" : "▾";
+  try {
+    const hidden = JSON.parse(localStorage.getItem("sidebarCollapsed") || "[]");
+    const i = hidden.indexOf(id);
+    if (collapsed && i < 0) hidden.push(id);
+    if (!collapsed && i >= 0) hidden.splice(i, 1);
+    localStorage.setItem("sidebarCollapsed", JSON.stringify(hidden));
+  } catch (e) { /* 无痕模式等禁用存储时仅本次生效 */ }
+}
+
+function restoreSections() {
+  let hidden = [];
+  try {
+    hidden = JSON.parse(localStorage.getItem("sidebarCollapsed") || "[]");
+  } catch (e) { return; }
+  for (const id of hidden) {
+    const body = document.getElementById(id);
+    if (!body) continue;
+    body.classList.add("collapsed");
+    const caret = document.getElementById("caret-" + id);
+    if (caret) caret.textContent = "▸";
+  }
 }
 
 // 左栏单视图：点「当前配置」→ 当前配置卡片；点配置档 → 文件视图；
@@ -1301,31 +1355,57 @@ async function createConfig() {
 }
 
 // --- Server Management ---
+// 服务器与配置文件一样，左栏列表管理：点选切换，悬停有测试/删除，新增走管理页。
 let currentServer = "local";
+let serversCache = [];
 
 async function loadServers() {
   try {
     const data = await api("GET", "api/servers");
-    const select = document.getElementById("serverSelect");
-    // Keep local option, remove others
-    while (select.options.length > 1) select.remove(1);
-    for (const s of data.servers) {
-      const opt = document.createElement("option");
-      opt.value = s.name;
-      opt.textContent = `${s.name} (${s.host})`;
-      select.appendChild(opt);
+    serversCache = data.servers || [];
+    // 当前选中的远端若已被删，回落到本地
+    if (currentServer !== "local" && !serversCache.some((s) => s.name === currentServer)) {
+      currentServer = "local";
+      currentName = null;
+      liveProfileName = null;
+      selectedItem = null;
+      renderConfigView();
+      loadAll();
     }
-    select.value = currentServer;
+    renderServerSidebar();
   } catch (e) {
     console.error("加载服务器列表失败", e);
   }
 }
 
-function onServerChange() {
-  currentServer = document.getElementById("serverSelect").value;
+function renderServerSidebar() {
+  const el = document.getElementById("serverSidebarList");
+  let html = `<div class="config-item${currentServer === "local" ? " active" : ""}" onclick="selectServer('local')">
+      <span class="name">🖥️ ${t("localServer")}</span>
+      <span class="actions"></span>
+    </div>`;
+  for (const s of serversCache) {
+    html += `<div class="config-item${currentServer === s.name ? " active" : ""}" onclick="selectServer('${esc(s.name)}')">
+      <span class="name">${esc(s.name)} <span class="server-badge remote">${esc(s.host)}</span></span>
+      <span class="actions">
+        <button onclick="event.stopPropagation();testServer('${esc(s.name)}')" data-i18n-title="testServer" title="测试连接">🔌</button>
+        <button class="btn-del" onclick="event.stopPropagation();deleteServer('${esc(s.name)}')" data-i18n-title="delete" title="删除">🗑️</button>
+      </span>
+    </div>`;
+  }
+  el.innerHTML = html;
+  el.querySelectorAll("[data-i18n-title]").forEach((n) => {
+    n.setAttribute("title", t(n.getAttribute("data-i18n-title")));
+  });
+}
+
+function selectServer(name) {
+  if (name === currentServer) return;
+  currentServer = name;
   currentName = null; // 换服务器时清空上一台的选中/标记状态
   liveProfileName = null;
   selectedItem = null;
+  renderServerSidebar();
   renderConfigView();
   loadAll();
 }
@@ -1472,6 +1552,7 @@ async function doRemoteSwitch(serverName, configContent) {
 
 // --- Init ---
 document.getElementById("fileName").textContent = t("selectConfig");
+restoreSections();
 loadServers();
 loadAll();
 renderConfigView(); // 默认即当前配置视图：卡片显示、左侧入口高亮
