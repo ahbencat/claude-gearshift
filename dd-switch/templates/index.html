@@ -667,10 +667,12 @@ async function loadRoute() {
       api("GET", "api/route/status"),
       api("GET", "api/route/providers"),
     ]);
-    syncRouteTab(true);
-    renderRoute(status);
+    // 先赋值再渲染：syncRouteTab/renderRoute 会重画侧栏路由区块与停止提示，
+    // 拿旧（空）routeProviders 渲染会导致数据已到而列表仍显示「（空）」。
     routeProviders = providers.providers || [];
     routeCurrent = providers.current || null;
+    syncRouteTab(true);
+    renderRoute(status);
     // 正在编辑的供应商被删掉时退回路由卡片
     if (selectedItem && selectedItem.kind === "provider" && !selectedItem.isNew
         && !routeProviders.some((p) => p.id === selectedItem.id)) {
