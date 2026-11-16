@@ -1,28 +1,16 @@
-diff --git a/src-tauri/Cargo.lock b/src-tauri/Cargo.lock
-index c6c65449..c86c6f35 100644
---- a/src-tauri/Cargo.lock
-+++ b/src-tauri/Cargo.lock
-@@ -6139,6 +6139,7 @@ dependencies = [
-  "libc",
-  "mio",
-  "pin-project-lite",
-+ "signal-hook-registry",
-  "socket2",
-  "tokio-macros",
-  "windows-sys 0.61.2",
 diff --git a/src-tauri/Cargo.toml b/src-tauri/Cargo.toml
-index d596fd27..7faf1434 100644
+index 2694a159..f1c5b5c9 100644
 --- a/src-tauri/Cargo.toml
 +++ b/src-tauri/Cargo.toml
-@@ -44,7 +44,7 @@ arboard = "3.6"
+@@ -46,7 +46,7 @@ arboard = "3.6"
  flate2 = "1"
  brotli = "7"
  zstd = "0.13"
--tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "net"] }
-+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "net", "signal"] }
+-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "net", "process"] }
++tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "net", "process", "signal"] }
  futures = "0.3"
- async-stream = "0.3"
- bytes = "1.5"
+ # Keep legacy SSE support alongside Streamable HTTP; newer SDKs removed SSE.
+ rmcp = { version = "0.8.5", features = ["client", "transport-async-rw", "transport-sse-client-reqwest", "transport-streamable-http-client-reqwest"] }
 diff --git a/src-tauri/src/bin/cc-switch-proxy.rs b/src-tauri/src/bin/cc-switch-proxy.rs
 new file mode 100644
 index 00000000..c3bb29a8
@@ -75,10 +63,10 @@ index 00000000..c3bb29a8
 +    }
 +}
 diff --git a/src-tauri/src/database/mod.rs b/src-tauri/src/database/mod.rs
-index e00598dc..eb91c938 100644
+index c45718bb..ffdc13b8 100644
 --- a/src-tauri/src/database/mod.rs
 +++ b/src-tauri/src/database/mod.rs
-@@ -98,7 +98,14 @@ impl Database {
+@@ -144,7 +144,14 @@ impl Database {
      ///
      /// 数据库文件位于 `~/.cc-switch/cc-switch.db`
      pub fn init() -> Result<Self, AppError> {
@@ -94,7 +82,7 @@ index e00598dc..eb91c938 100644
          let db_exists = db_path.exists();
  
          // 确保父目录存在
-@@ -106,7 +113,7 @@ impl Database {
+@@ -152,7 +159,7 @@ impl Database {
              std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
          }
  
@@ -363,10 +351,10 @@ index 00000000..28e4f4f9
 +    }
 +}
 diff --git a/src-tauri/src/lib.rs b/src-tauri/src/lib.rs
-index 263a0b93..4061d20d 100644
+index 485179e1..07089413 100644
 --- a/src-tauri/src/lib.rs
 +++ b/src-tauri/src/lib.rs
-@@ -16,6 +16,7 @@ mod error;
+@@ -24,6 +24,7 @@ mod frontend_parity_tests;
  mod gemini_config;
  mod gemini_mcp;
  mod grok_config;
@@ -374,11 +362,12 @@ index 263a0b93..4061d20d 100644
  pub mod hermes_config;
  mod init_status;
  mod jsonc_document;
-@@ -34,7 +35,9 @@ mod pi_config;
+@@ -45,8 +46,10 @@ mod pi_config;
  mod prompt;
  mod prompt_files;
  mod provider;
 +pub mod provider_cli;
+ mod provider_kind;
  mod proxy;
 +pub mod proxy_cli;
  mod services;
@@ -1044,10 +1033,10 @@ index 00000000..38450f46
 +    }
 +}
 diff --git a/src-tauri/src/proxy/forwarder.rs b/src-tauri/src/proxy/forwarder.rs
-index aea53ada..10f16801 100644
+index d1fdd938..413fc687 100644
 --- a/src-tauri/src/proxy/forwarder.rs
 +++ b/src-tauri/src/proxy/forwarder.rs
-@@ -1698,6 +1698,22 @@ impl RequestForwarder {
+@@ -1889,6 +1889,22 @@ impl RequestForwarder {
                  }
              }
          }
@@ -1070,7 +1059,7 @@ index aea53ada..10f16801 100644
          let resolved_claude_api_format = if adapter.name() == "Claude" {
              Some(
                  self.resolve_claude_api_format(provider, &mapped_body, is_copilot)
-@@ -2243,6 +2259,24 @@ impl RequestForwarder {
+@@ -2517,6 +2533,24 @@ impl RequestForwarder {
                  }
              }
  
@@ -1095,7 +1084,7 @@ index aea53ada..10f16801 100644
              for secret in std::iter::once(&auth.api_key).chain(auth.access_token.iter()) {
                  if !secret.is_empty() && !log_secrets.contains(secret) {
                      log_secrets.push(secret.clone());
-@@ -3146,6 +3180,15 @@ impl RequestForwarder {
+@@ -3438,6 +3472,15 @@ impl RequestForwarder {
          is_copilot: bool,
      ) -> String {
          if !is_copilot {
@@ -1112,10 +1101,10 @@ index aea53ada..10f16801 100644
          }
  
 diff --git a/src-tauri/src/proxy/handlers.rs b/src-tauri/src/proxy/handlers.rs
-index 7be5869e..1e0e5879 100644
+index c4045c0b..722ac8e4 100644
 --- a/src-tauri/src/proxy/handlers.rs
 +++ b/src-tauri/src/proxy/handlers.rs
-@@ -763,6 +763,9 @@ async fn handle_claude_transform(
+@@ -863,6 +863,9 @@ async fn handle_claude_transform(
      // 根据 api_format 选择非流式转换器
      let transform_result = match (direct_anthropic_response, upstream_response) {
          (Some(response), _) => Ok(response),
@@ -1126,17 +1115,17 @@ index 7be5869e..1e0e5879 100644
              transform_responses::responses_to_anthropic_with_web_search_options(
                  response,
 diff --git a/src-tauri/src/proxy/mod.rs b/src-tauri/src/proxy/mod.rs
-index 4a8bfd41..951ad839 100644
+index 4ee851ee..97078f73 100644
 --- a/src-tauri/src/proxy/mod.rs
 +++ b/src-tauri/src/proxy/mod.rs
-@@ -21,6 +21,7 @@ pub(crate) mod json_canonical;
- pub mod log_codes;
+@@ -26,6 +26,7 @@ pub mod log_codes;
+ pub(crate) mod loopback_probe;
  pub mod media_sanitizer;
  pub mod model_mapper;
 +pub mod model_route;
  pub mod opaque_state_rectifier;
+ pub mod privacy_filter;
  pub mod provider_router;
- pub mod providers;
 diff --git a/src-tauri/src/proxy/model_route.rs b/src-tauri/src/proxy/model_route.rs
 new file mode 100644
 index 00000000..c89f57d1
@@ -1310,10 +1299,10 @@ index 00000000..c89f57d1
 +    }
 +}
 diff --git a/src-tauri/src/proxy/providers/claude.rs b/src-tauri/src/proxy/providers/claude.rs
-index 79569d3e..66cd1a29 100644
+index 2e70d97b..53c92e67 100644
 --- a/src-tauri/src/proxy/providers/claude.rs
 +++ b/src-tauri/src/proxy/providers/claude.rs
-@@ -962,10 +962,12 @@ impl ProviderAdapter for ClaudeAdapter {
+@@ -983,10 +983,12 @@ impl ProviderAdapter for ClaudeAdapter {
          // - "anthropic" (默认): 直接透传，无需转换
          // - "openai_chat": 需要 Anthropic ↔ OpenAI Chat Completions 格式转换
          // - "openai_responses": 需要 Anthropic ↔ OpenAI Responses API 格式转换

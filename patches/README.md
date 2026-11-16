@@ -11,9 +11,9 @@ Rust local-routing engine (`src-tauri/src/proxy/`) **without the Tauri window or
 tray**, reading providers/models from cc-switch's SQLite DB. This is the piece
 that lets `linux_switch` spawn the Rust router instead of LiteLLM.
 
-- Applies to cc-switch `479964f2` (v4.0.10). Touches:
-  - `src-tauri/Cargo.toml` — enables tokio's `signal` feature
-  - `src-tauri/Cargo.lock` — records that feature (adds `signal-hook-registry` to tokio's deps)
+- Applies to cc-switch `86e23b63` (v4.0.33). Touches:
+  - `src-tauri/Cargo.toml` — enables tokio's `signal` feature (no `Cargo.lock`
+    change at v4.0.33: upstream already records tokio's `signal-hook-registry` edge)
   - `src-tauri/src/database/mod.rs` — splits `Database::init()` into `init()` + `init_at(path)`
   - `src-tauri/src/lib.rs` — declares `pub mod headless;`, `pub mod provider_cli;`, `pub mod proxy_cli;`
   - `src-tauri/src/headless.rs` — new module: arg parsing, DB open, proxy start/stop
@@ -28,7 +28,7 @@ that lets `linux_switch` spawn the Rust router instead of LiteLLM.
 ### Apply
 
 `cc-switch` is a **git submodule** of this repository, pinned to the commit
-the patch targets (`479964f2`, v4.0.10). Check it out and apply there:
+the patch targets (`86e23b63`, v4.0.33). Check it out and apply there:
 
 ```bash
 git submodule update --init          # or: git submodule update
@@ -233,7 +233,15 @@ daemon reuses them untouched (no forked forwarding logic):
   `anthropic` default must not downgrade the whole stream to passthrough: the
   gate is now `has_routes(provider) || <legacy format check>`, sending mixed
   providers through the unified response path where the per-model `format`
-  decides per request.
+  decides per request. **Inert on the main path at v4.0.33**: upstream now
+  resolves the api_format per request (forwarder / handlers) and the Claude
+  adapter's resolved format is always `Some`, so `has_routes` never decides —
+  kept as redundant-but-harmless for a minimal patch footprint (upstream's
+  per-request resolution also fixes a latent streaming case the old gate had).
+  Upstream's own per-model mapping (`meta.claudeDesktopModelRoutes`, new in
+  v4.0.33) only applies to `AppType::ClaudeDesktop` and stores under a
+  different key, so it does not interact with this patch's `modelRoutes` /
+  `modelNodes` under `app=claude`.
 
 Net effect: three usage shapes collapse onto one table — full url+key node =
 independent access point, key-only node = multi-key supplement, format-only
@@ -265,12 +273,13 @@ restart `cc-switch-proxy` after `set`/`clear` for it to take effect
 
 ### Caveats
 
-- **Verified** on Ubuntu 24.04 with Rust 1.95: `cargo build --bin cc-switch-proxy`
-  links, `cargo test --lib headless provider_cli proxy_cli` passes (14 tests
+- **Verified** on Ubuntu 24.04 with Rust 1.95 (re-run on v4.0.33,
+  2026-11-16): `cargo build --bin cc-switch-proxy`
+  links, `cargo test --lib headless provider_cli proxy_cli` passes (17 tests
   across the three subcommand modules), `cargo fmt`/`clippy -D warnings` are
-  clean, the full `cargo test --lib` suite is green (3637 passed — the upstream
-  codex timing test occasionally flaps on a heavily loaded box but passes
-  standalone), the daemon boots
+  clean, the full `cargo test --lib` suite is green (4878 passed, 14 ignored —
+  the upstream codex timing test occasionally flaps on a heavily loaded box but
+  passes standalone), the daemon boots
   (`/health` → 200, `/status` → running, clean SIGTERM shutdown), and both
   `provider add/list/update/set-current/delete/import` and `proxy
   get/set/clear` subcommands were exercised end-to-end against throwaway DBs.

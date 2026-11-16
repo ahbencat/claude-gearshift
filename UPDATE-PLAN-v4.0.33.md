@@ -1,8 +1,14 @@
 # 更新 cc-switch 子模块 v4.0.10 → v4.0.33（补丁随 pin 一起动）
 
-> **状态：待执行**（2026-11-16 定稿，已对 v4.0.33 逐锚点只读核实）。
-> 目标 commit：`ee5b0d3968f42380dfd46fcac5abe11ffbb88562`（tag v4.0.33）。
-> 执行前必读：本文件 + `CLAUDE.md`「Build discipline」+ `patches/README.md`。
+> **状态：已执行**（2026-11-16 完成，10 步全过验证门，测试全绿：
+> Rust 4878 passed / Python 110 OK）。
+> 目标 commit：`86e23b6331b9ce2cee314d1ebb5b186da0de645a`（v4.0.33 的实际
+> commit；`ee5b0d39` 是 annotated tag 对象，peel 到该 commit——gitlink 与文档
+> 一律用 `86e23b63`）。
+> 与原计划的两处偏差：① Cargo.lock **无变更**（上游 lock 已含 tokio 的
+> `signal-hook-registry` 边），再生补丁为 **12 文件**而非 13、无 lock hunk；
+> ② 步骤 1 门中"11G target 缓存保留"仅指开发阶段（步骤 2–5），步骤 7 的
+> canonical 冷构建按计划 `worktree remove` 后从零编译（release 7m53s）。
 
 ## Context
 
