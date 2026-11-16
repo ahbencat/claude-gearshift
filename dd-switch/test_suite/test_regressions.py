@@ -29,10 +29,10 @@ Defects 1-8 were fixed in commit ``91c28a5``; defects 9-12 are fixed
 likewise. All tests remain in this file as plain regression guards
 (markers dropped). A future regression turns them red again directly.
 
-Besides the defects, one test documents current behaviour that the docs do
-not mention: ``RemoteScanBehaviorTests`` pins the remote scan directory
-(``~/config``, derived in ssh_manager.py:195). It is a passing test — change
-it deliberately if the remote convention ever changes.
+Besides the defects, ``RemotePathResolutionTests`` pins two deliberate
+conventions: the remote settings path is resolved to an absolute path via
+``sftp.normalize`` (SFTP never expands ``~``), and config profiles always
+come from the local ``config/`` dir (no remote config scan).
 """
 
 import json
@@ -350,7 +350,7 @@ class BackupCollisionTests(AppTestCase):
     within the same second copy to the same name: the second copy overwrites
     the first, and the *original* settings are lost. (The same pattern exists
     in the routing backup at app.py:204 and the remote one at
-    ssh_manager.py:158.)
+    ssh_manager.py:171.)
     """
 
     def test_same_second_switches_keep_two_distinct_backups(self):
@@ -445,31 +445,45 @@ class ProviderBaseUrlNormalizationTests(AppTestCase):
         )
 
 
-class RemoteScanBehaviorTests(AppTestCase):
-    """Documents defect-adjacent behaviour — remote_scan_configs scans the
-    derived directory ``~/config`` (app.py-free derivation in
-    ssh_manager.py:195: ``~/.claude/settings.json`` → parent → parent →
-    /config). The docs never state this location; this test pins the current
-    behaviour so a change is a conscious decision, not an accident.
+class RemotePathResolutionTests(AppTestCase):
+    """SFTP does not expand ``~`` — the protocol passes paths verbatim to
+    the server, which treats ``~`` as a literal directory name. The remote
+    settings path must therefore be resolved via REALPATH of ``.``
+    (``sftp.normalize``) to an absolute path. Config profiles come from the
+    *local* ``config/`` dir — there is no remote config scan (removed
+    deliberately; switching a remote only rewrites its settings.json).
     """
 
-    def test_remote_scan_reads_the_derived_config_dir(self):
+    def test_remote_settings_path_is_absolute_via_normalize(self):
+        import ssh_manager
+
+        sftp = mock.MagicMock()
+        sftp.normalize.return_value = "/home/u"
+
+        self.assertEqual(
+            ssh_manager._remote_settings_path(sftp),
+            "/home/u/.claude/settings.json",
+        )
+        sftp.normalize.assert_called_once_with(".")
+
+    def test_remote_read_uses_the_resolved_absolute_path(self):
         import io
         import ssh_manager
 
-        payload = {"env": {"X": "1"}}
         sftp = mock.MagicMock()
-        sftp.listdir.return_value = ["a.json", "sample.json", "notes.txt"]
-        sftp.open.return_value.__enter__.return_value = io.StringIO(json.dumps(payload))
+        sftp.normalize.return_value = "/home/u"
+        sftp.open.return_value.__enter__.return_value = io.StringIO("{}")
         client = mock.MagicMock()
         client.open_sftp.return_value = sftp
 
         with mock.patch.object(ssh_manager, "get_ssh_client", return_value=client):
-            configs = ssh_manager.remote_scan_configs({"name": "r"}, "pw")
+            result = ssh_manager.remote_read_config({"name": "r"}, "pw")
 
-        sftp.listdir.assert_called_once_with("~/config")
-        sftp.open.assert_called_once_with("~/config/a.json", "r")
-        self.assertEqual(configs, [{"name": "a.json", "content": payload}])
+        sftp.open.assert_called_once_with("/home/u/.claude/settings.json", "r")
+        self.assertEqual(result["path"], "/home/u/.claude/settings.json")
+        # never a literal tilde path
+        for call in sftp.open.call_args_list:
+            self.assertNotIn("~", call.args[0])
 
 
 if __name__ == "__main__":

@@ -15,7 +15,19 @@ import base64
 
 
 SERVERS_FILE = Path(__file__).resolve().parent / "servers.json"
+# Documented location on the remote; SFTP cannot use it verbatim (see
+# _remote_settings_path), so it is a template, not a path we send.
 REMOTE_CONFIG_PATH = "~/.claude/settings.json"
+
+
+def _remote_settings_path(sftp) -> str:
+    """Absolute remote path of settings.json.
+
+    SFTP does not expand ``~`` — the protocol passes paths verbatim to the
+    server, which treats ``~`` as a literal directory name. Resolve the home
+    directory via REALPATH of ``.`` (the session starts there) instead.
+    """
+    return f"{sftp.normalize('.')}/.claude/settings.json"
 
 
 def _derive_key(password: str, salt: bytes) -> bytes:
@@ -135,13 +147,13 @@ def remote_read_config(server: dict, password: str) -> dict:
     client = get_ssh_client(server, password)
     try:
         sftp = client.open_sftp()
-        remote_path = REMOTE_CONFIG_PATH
+        remote_path = _remote_settings_path(sftp)
         try:
             with sftp.open(remote_path, "r") as f:
                 content = json.load(f)
-            return {"exists": True, "content": content}
+            return {"exists": True, "content": content, "path": remote_path}
         except FileNotFoundError:
-            return {"exists": False, "content": None}
+            return {"exists": False, "content": None, "path": remote_path}
     finally:
         client.close()
 
@@ -151,7 +163,7 @@ def remote_write_config(server: dict, password: str, content: dict):
     client = get_ssh_client(server, password)
     try:
         sftp = client.open_sftp()
-        remote_path = REMOTE_CONFIG_PATH
+        remote_path = _remote_settings_path(sftp)
         # Backup existing
         try:
             sftp.stat(remote_path)
@@ -193,28 +205,3 @@ def remote_switch(server: dict, password: str, config_content: dict) -> dict:
     # Return new state
     result = remote_read_config(server, password)
     return result
-
-
-def remote_scan_configs(server: dict, password: str) -> list:
-    """Scan remote config directory for JSON files."""
-    client = get_ssh_client(server, password)
-    try:
-        sftp = client.open_sftp()
-        config_dir = str(Path(REMOTE_CONFIG_PATH).parent.parent / "config")
-        try:
-            entries = sftp.listdir(config_dir)
-        except FileNotFoundError:
-            return []
-        configs = []
-        for name in sorted(entries):
-            if not name.endswith(".json") or name == "sample.json":
-                continue
-            try:
-                with sftp.open(f"{config_dir}/{name}", "r") as f:
-                    content = json.load(f)
-                configs.append({"name": name, "content": content})
-            except Exception:
-                pass
-        return configs
-    finally:
-        client.close()

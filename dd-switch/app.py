@@ -1302,21 +1302,6 @@ def api_servers_test(name):
         return jsonify({"error": f"连接失败: {e}"}), 400
 
 
-@app.route("/api/servers/<name>/configs")
-@login_required
-def api_servers_configs(name):
-    """Get configs from a remote server."""
-    servers = ssh_manager.load_servers()
-    server = next((s for s in servers if s["name"] == name), None)
-    if not server:
-        return jsonify({"error": f"服务器 {name} 不存在"}), 404
-    try:
-        configs = ssh_manager.remote_scan_configs(server, ACCESS_PASSWORD)
-        return jsonify({"configs": configs})
-    except Exception as e:
-        return jsonify({"error": f"获取配置失败: {e}"}), 500
-
-
 @app.route("/api/servers/<name>/current")
 @login_required
 def api_servers_current(name):
@@ -1332,7 +1317,7 @@ def api_servers_current(name):
         content = result["content"]
         env = content.get("env", {})
         other_fields = {k: v for k, v in content.items() if k != "env"}
-        return jsonify({"exists": True, "env": _mask_secret_env(env), "other_fields": other_fields, "path": ssh_manager.REMOTE_CONFIG_PATH})
+        return jsonify({"exists": True, "env": _mask_secret_env(env), "other_fields": other_fields, "path": result.get("path", ssh_manager.REMOTE_CONFIG_PATH)})
     except Exception as e:
         return jsonify({"error": f"读取失败: {e}"}), 500
 

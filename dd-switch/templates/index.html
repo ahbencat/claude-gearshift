@@ -644,7 +644,9 @@ async function loadAll() {
     routeRunning = false;
     document.getElementById("routeCard").style.display = "none";
     syncRouteTab(false);
-    await Promise.all([loadRemoteConfigs(currentServer), loadRemoteCurrent(currentServer)]);
+    // 配置列表始终来自本地 config/（切到远端只是换了切换目标），
+    // 远端只读写 ~/.claude/settings.json——见 README「分离设计」。
+    await loadRemoteCurrent(currentServer);
   }
 }
 
@@ -1490,16 +1492,6 @@ async function testServer(name) {
 }
 
 // --- Remote Config Loading ---
-async function loadRemoteConfigs(serverName) {
-  try {
-    const data = await api("GET", `api/servers/${serverName}/configs`);
-    configs = data.configs || [];
-    renderSidebar();
-  } catch (e) {
-    toast(translateError(e.message), "error");
-  }
-}
-
 async function loadRemoteCurrent(serverName) {
   try {
     const data = await api("GET", `api/servers/${serverName}/current`);

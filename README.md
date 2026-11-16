@@ -21,7 +21,7 @@ every machine and editing JSON by hand — easy to miss one, easy to typo.
 One password-protected Web UI fixes that:
 
 - **Every machine in one place** — add your servers once (SSH key auth), then
-  read, switch and scan each server's `~/.claude/settings.json` from a single page.
+  read and switch each server's `~/.claude/settings.json` from a single page.
 - **Predefined profiles, one-click switch** — keep each provider as a file under
   `config/`; switching replaces only `env` and writes atomically, so `theme` /
   `permissions` / `skills` stay untouched.
@@ -60,10 +60,14 @@ Manage Claude Code configs on **multiple remote servers** from one Web UI:
 - **SSH key-based authentication** — supports encrypted keys with passphrase
 - **Passphrase encryption** — SSH key passphrases are encrypted with your Web UI login password (PBKDF2 + Fernet), never stored in plain text
 - **Automatic operation** — once logged in, SSH connections are established automatically without re-entering credentials
-- **Remote config management** — read, switch, and scan configs on remote servers via SSH/SFTP
+- **Remote config management** — profiles always come from the **local**
+  `config/` dir (nothing is scanned on the remote); switching a remote writes
+  the selected profile's `env` into its `settings.json` over SSH/SFTP
 - **Server management** — add / edit / delete / test servers from the sidebar
 
-> **Note:** Remote servers use the fixed path `~/.claude/settings.json`.
+> **Note:** Remote servers only read/write the fixed path
+> `~/.claude/settings.json` — SFTP does not expand `~`, so the path is
+> resolved to an absolute one via REALPATH after connecting.
 
 ### 🔒 Password Protection
 
