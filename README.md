@@ -6,7 +6,8 @@ Shift gears for Claude Code — quickly switch model/provider configs on Linux w
 
 The Web UI (`dd-switch/`, Flask + waitress, browser-based, password-protected)
 is the supported interface, working off the shared `config/` directory with
-the same switch semantics (replace `env` only → atomic write).
+the same switch semantics (replace `env` only → atomic write; an empty or
+missing `env` keeps the live one).
 
 > **Note:** the terminal script `switch_claude_config.sh` was retired and
 > removed — the Web UI is the only supported interface.
@@ -40,11 +41,12 @@ No more per-server manual editing, no more drift between machines.
 
 ```bash
 cd dd-switch
-python3 app.py
+.venv/bin/python app.py
 # open http://localhost:10086
 ```
 
-Requires `flask` + `waitress` + `paramiko` + `cryptography` — `pip install flask waitress paramiko cryptography`.
+Requires `flask` + `waitress` + `paramiko` + `cryptography` — `pip install -r requirements.txt`
+(recreate the venv if missing: `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`).
 
 - Set the access password via the `DD_SWITCH_PASSWORD` env var (defaults to `admin`)
   > **Deployment note:** always set `DD_SWITCH_PASSWORD` in production — without it, the UI falls back to the default password `admin`.
@@ -79,7 +81,7 @@ The Web UI is **password-protected end to end** — every page and every API end
 | **Session** | Server-side token stored in an `HttpOnly` cookie, 8-hour expiry, `SameSite=Lax` |
 | **Coverage** | Unauthenticated page visits redirect to the login screen; unauthenticated API calls return `401` + `login_required` |
 | **Cache safety** | All responses carry `no-store` headers — config contents never linger in the browser cache |
-| **Token masking** | API tokens shown in the UI are truncated (`sk-ant-api03...`), never rendered in full |
+| **Token masking** | Secret `env` values are masked server-side as `***`, never rendered in full |
 | **Logout** | The Log out button invalidates the session server-side immediately |
 
 ![Login screen](assets/login-en.png)
@@ -135,7 +137,7 @@ situations:
    local-routing page in the Web UI has an "Outbound proxy" box (it writes the
    same global-proxy setting the desktop app uses, via
    `cc-switch-proxy proxy set --url …` on headless hosts); `HTTP_PROXY` /
-   `HTTPS_PROXY` env vars work too. A daemon restart makes it effective.
+   `HTTPS_PROXY` / `ALL_PROXY` env vars work too. A daemon restart makes it effective.
 
 If you simply connect directly to an Anthropic-protocol provider and the
 network is fine, the ordinary switch flow is enough — no need for local
@@ -143,8 +145,9 @@ routing.
 
 ### The two provider types (access-point configs live in the sidebar's "Local routing" block)
 
-- **Single-type** — the upstream offers exactly **one** API shape (only
-  `/v1/messages`, or only `/v1/responses`). All it takes is a name + access
+- **Single-type** — the upstream offers exactly **one** API shape (`anthropic`
+  `/v1/messages`, `openai_chat` `/v1/chat/completions`, `openai_responses`
+  `/v1/responses`, or `gemini_native`). All it takes is a name + access
   point (Base URL) + key + that one protocol; the relay converts Anthropic
   requests into that shape.
 - **Mixed-type** — the upstream is opencode-like: several API shapes coexist
@@ -271,7 +274,7 @@ systemctl --user restart dd-switch
   re-spawns it and reuses the existing snapshot.
 - While routing is active, profile switching is locked (it would corrupt the
   restore snapshot) — stop routing first.
-- Run the tests with `python3 -m unittest discover -s test_suite` from
+- Run the tests with `.venv/bin/python -m unittest discover -s test_suite` from
   `dd-switch/`. Unit suites are fully mocked; `test_local_routing_e2e.py`
   drives the real proxy binary and a live upstream and skips cleanly when
   either is unavailable.
@@ -306,14 +309,14 @@ More optional fields: [Claude Code environment variables](https://docs.anthropic
 
 | Step | What it does |
 |---|---|
-| **Scan** | Walks the config directory for `.json` files |
+| **Scan** | Walks the config directory for `.json` files (skips the `sample.json` template) |
 | **Validate** | Syntax-checks each file; invalid files are skipped with the reason |
 | **Summarize** | Shows the current config's Base URL and Model |
 | **Select** | Pick a config from the sidebar list |
 | **Preview** | Shows the full selected file before switching |
 | **Confirm** | Switches only after explicit confirmation |
-| **Back up** | Backs up the current config to `settings.json.bak.<timestamp>` before switching |
-| **Merge** | Replaces only `env`, preserving `theme` / `permissions` / `actions` / `skills` |
+| **Back up** | Backs up the current config to `settings.json.bak.<timestamp>` (appends `-1`, `-2`… on same-second collisions) before switching |
+| **Merge** | Replaces only `env`, preserving every other field (e.g. `theme` / `permissions` / `skills`); an empty or missing `env` keeps the live `env` instead of wiping credentials |
 | **Atomic write** | Temp file + `mv rename` — no half-written JSON |
 | **Multi-server** | Manage configs on multiple remote servers via SSH key auth |
 | **Passphrase encryption** | SSH key passphrases encrypted with Web UI password (PBKDF2 + Fernet) |
@@ -349,4 +352,5 @@ cp ~/.claude/settings.json config/cf_default.json
 
 2. Switch — in the Web UI: pick a config in the left sidebar, review it in
    the preview pane, confirm to switch. The current config is backed up
-   automatically (`settings.json.bak.<timestamp>`); only `env` is replaced.
+   automatically (`settings.json.bak.<timestamp>`, `-1`/`-2`… on collisions);
+   only `env` is replaced (an empty or missing `env` keeps the live one).

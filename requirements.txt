@@ -1,7 +1,7 @@
 # claude-gearshift — dd-switch Web UI 依赖
 #
-# 只有 Web UI (dd-switch/) 需要这些；CLI 脚本 switch_claude_config.sh
-# 只依赖 bash + jq，不在此列。
+# 只有 Web UI (dd-switch/) 需要这些；终端脚本 switch_claude_config.sh
+# 已退役并删除，Web UI 是唯一受支持的使用方式。
 #
 # 下限版本取自当前已验证可跑的环境，不做锁死——兼容更新自行升级即可。
 #   pip install -r requirements.txt

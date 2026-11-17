@@ -5,7 +5,8 @@
 给 Claude Code 换挡 —— 在 Linux 上快速切换模型/供应商配置，保留其他设置不变。
 
 Web UI（`dd-switch/`，Flask + waitress，浏览器操作，密码保护）是受支持的
-使用方式，共用 `config/` 目录和同一套切换逻辑（只替换 `env` → 原子写入）。
+使用方式，共用 `config/` 目录和同一套切换逻辑（只替换 `env` → 原子写入；选中
+配置档无 `env` 或 `env` 为空时保留线上 `env`）。
 
 > **说明：** 终端脚本 `switch_claude_config.sh` 已退役并删除——Web UI 是唯一
 > 受支持的使用方式。
@@ -34,11 +35,12 @@ Web UI（`dd-switch/`，Flask + waitress，浏览器操作，密码保护）是�
 
 ```bash
 cd dd-switch
-python3 app.py
+.venv/bin/python app.py
 # 打开 http://localhost:10086
 ```
 
-需要 `flask` + `waitress` + `paramiko` + `cryptography`（`pip install flask waitress paramiko cryptography`）。
+需要 `flask` + `waitress` + `paramiko` + `cryptography`（`pip install -r requirements.txt`；
+venv 缺失时先重建：`python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`）。
 
 - 访问密码通过环境变量 `DD_SWITCH_PASSWORD` 设置（不设则默认 `admin`）
   > **部署提醒：** 生产环境务必设置 `DD_SWITCH_PASSWORD`，否则会回退到默认密码 `admin`。
@@ -70,7 +72,7 @@ Web UI **全程密码保护** —— 每个页面、每个 API 接口都必须�
 | **会话** | 服务端 token 存于 `HttpOnly` cookie，8 小时过期，`SameSite=Lax` |
 | **覆盖范围** | 未登录访问页面 → 跳转登录页；未登录调用 API → 返回 `401` + `login_required` |
 | **缓存安全** | 所有响应带 `no-store` 头 —— 配置内容不会滞留在浏览器缓存 |
-| **token 脱敏** | 界面上显示的 API token 一律截断（`sk-ant-api03...`），从不完整渲染 |
+| **token 脱敏** | 敏感 `env` 值由服务端统一打码为 `***`，从不完整渲染 |
 | **登出** | 点击退出登录立即在服务端作废会话 |
 
 ![登录页](assets/login-zh.png)
@@ -79,7 +81,7 @@ Web UI **全程密码保护** —— 每个页面、每个 API 接口都必须�
 
 | 主面板 | 切换确认 |
 |---|---|
-| ![主面板](assets/dashboard-zh.png) | ![切换确认](assets/confirm-en.png) |
+| ![主面板](assets/dashboard-zh.png) | ![切换确认（英文版，暂无中文截图）](assets/confirm-en.png) |
 
 ## 本地路由（cc-switch-proxy，可选）
 
@@ -114,7 +116,7 @@ Web UI **全程密码保护** —— 每个页面、每个 API 接口都必须�
 2. **加代理** —— 出站请求必须经 HTTP/HTTPS/SOCKS5 网络代理才能到达上游。需要
    在**启动守护进程前**配置好：Web 界面的本地路由页有「出站代理」一栏（写入
    与桌面端「全局代理」同一份设置；无界面的机器也可以用 `cc-switch-proxy
-   proxy set --url …`），或直接用 `HTTP_PROXY` / `HTTPS_PROXY` 环境变量
+   proxy set --url …`），或直接用 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` 环境变量
    （守护进程会跟随）——配置后需重启 cc-switch-proxy 才生效。
 
 只是直连 Anthropic 协议供应商、网络也通畅的话，用原来的切换流程直连即可，
@@ -122,8 +124,9 @@ Web UI **全程密码保护** —— 每个页面、每个 API 接口都必须�
 
 ### 供应商的两种类型（接入点配置在左栏「本地路由」区块）
 
-- **单类型** —— 上游只提供**一种**接口形态（只有 `/v1/messages`，或只有
-  `/v1/responses`）。主要配置即可：名称 + 接入点（Base URL）+ Key + 那一种协议；
+- **单类型** —— 上游只提供**一种**接口形态（`anthropic` `/v1/messages`、
+  `openai_chat` `/v1/chat/completions`、`openai_responses` `/v1/responses`、
+  `gemini_native` 四选一）。主要配置即可：名称 + 接入点（Base URL）+ Key + 那一种协议；
   路由把 Anthropic 请求按该协议转换后转发。
 - **混合类型** —— 上游像 opencode 那样多种接口形态并存（`/v1/messages` 与
   `/v1/responses` 等同时可用），不同模型可能要不同接口、甚至不同接入点。编辑器里
@@ -225,7 +228,7 @@ systemctl --user restart dd-switch
   路由控制。
 - 该进程不会在重启后存活。重启后点“开启路由”会重新拉起并复用已有快照。
 - 路由开启期间禁止切换配置档（会破坏恢复快照）——请先关闭路由。
-- 测试：在 `dd-switch/` 下执行 `python3 -m unittest discover -s test_suite`。
+- 测试：在 `dd-switch/` 下执行 `.venv/bin/python -m unittest discover -s test_suite`。
   单元测试全程 mock；`test_local_routing_e2e.py` 使用真实代理二进制 + 真实上游，
   二者任一不可用时自动跳过（不会变红）。
 
@@ -259,14 +262,14 @@ config/
 
 | 步骤 | 说明 |
 |---|---|
-| **遍历** | 扫描指定目录下所有 `.json` 文件 |
+| **遍历** | 扫描指定目录下所有 `.json` 文件（跳过 `sample.json` 模板） |
 | **校验** | 检测 JSON 语法错误，无效文件跳过并列出原因 |
 | **展示** | 显示当前配置的 Base URL 和 Model |
 | **选择** | 在左侧列表选择要切换的配置 |
 | **预览** | 切换前展示选中文件的完整内容 |
 | **确认** | 确认后才执行切换 |
-| **备份** | 切换前自动备份原配置到 `settings.json.bak.<时间戳>` |
-| **合并** | 只替换 `env`（模型配置），保留 `theme` / `permissions` / `actions` / `skills` 等其他字段 |
+| **备份** | 切换前自动备份原配置到 `settings.json.bak.<时间戳>`（同秒碰撞追加 `-1`、`-2`…，不覆盖） |
+| **合并** | 只替换 `env`，保留其他所有字段（如 `theme` / `permissions` / `skills`）；选中配置档无 `env` 或 `env` 为空时保留线上 `env`，不清空凭据 |
 | **原子写入** | 临时文件 → `mv rename`，避免半写导致 JSON 损坏 |
 | **多服务器** | 通过 SSH 密钥认证管理多台远程服务器 |
 | **密码短语加密** | SSH 密钥密码短语使用 Web UI 密码加密（PBKDF2 + Fernet） |
@@ -300,4 +303,5 @@ cp ~/.claude/settings.json config/cf_default.json
 ```
 
 2. 切换——在 Web UI 里：左侧列表选一份配置，在预览区检查内容，确认切换。
-   当前配置自动备份（`settings.json.bak.<时间戳>`），只替换 `env`。
+   当前配置自动备份（`settings.json.bak.<时间戳>`，同秒碰撞追加 `-1`/`-2`…），只替换 `env`
+  （选中无 `env` 或 `env` 为空时保留线上 `env`）。
