@@ -11,10 +11,12 @@
 #
 #   make binary CC_SWITCH_DIR=/path/to/cc-switch
 #
-# Requires a Rust toolchain and the Tauri Linux prerequisites (WebKitGTK/GTK dev
-# packages) — see ../cc-switch/CONTRIBUTING.md. The cc-switch source tree is left
-# untouched: the build runs in a detached git worktree outside the repo (default
-# ~/.cache/cc-switch-proxy-build, override with BUILD_DIR=…).
+# Requires only a Rust toolchain: the proxy binary is built from the Tauri-free
+# `cc-switch-core` workspace member, so no WebKitGTK/GTK dev packages are needed
+# (the desktop GUI still needs them — see ../cc-switch/CONTRIBUTING.md). The
+# cc-switch source tree is left untouched: the build runs in a detached git
+# worktree outside the repo (default ~/.cache/cc-switch-proxy-build, override
+# with BUILD_DIR=…).
 
 CC_SWITCH_DIR ?= ../cc-switch
 BUILD_DIR     ?= $(HOME)/.cache/cc-switch-proxy-build
@@ -31,7 +33,7 @@ binary: check
 	git -C "$(CC_SWITCH_DIR)" worktree add --detach "$(BUILD_DIR)" HEAD
 	git -C "$(BUILD_DIR)" apply "$(PATCH)"
 	mkdir -p "$(BUILD_DIR)/dist"
-	cargo build --release --bin cc-switch-proxy --manifest-path "$(BUILD_DIR)/src-tauri/Cargo.toml"
+	cargo build --release -p cc-switch-core --bin cc-switch-proxy --manifest-path "$(BUILD_DIR)/src-tauri/Cargo.toml"
 	strip "$(BUILT_BIN)"
 	mkdir -p bin
 	install -m755 "$(BUILT_BIN)" "$(OUT)"

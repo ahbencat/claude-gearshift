@@ -121,7 +121,7 @@ SQLite database.
 > format selects the upstream path (`/v1/responses` vs `/v1/chat/completions`,
 > proven against a recording localhost sink). Starting writes only the two
 > dispatch keys — model names stay the user's own. Prerequisites missing
-> (no binary, no WebKitGTK runtime libs, no endpoint) ⇒ the suite skips.
+> (no binary, no endpoint) ⇒ the suite skips.
 > Details in [`TEST-REPORT.md`](TEST-REPORT.md). A top-level `"api_format"` in
 > an imported file is likewise honored on `provider import`.
 
@@ -247,8 +247,8 @@ systemctl --user restart dd-switch
 
 | Scope | What it needs | How to provide it |
 |---|---|---|
-| **Run** | `libwebkit2gtk-4.1.so.0` and `libjavascriptcoregtk-4.1.so.0` plus their deps (`libgstgl-1.0`, `libwebpdemux`, `libharfbuzz-icu`, `libmanette-0.2`, `libenchant-2`, `libhyphen`, `libsecret-1`, mesa/egl/gbm, dictionaries). GTK 3 / libsoup 3 are usually already present. | Root: `sudo apt-get install libwebkit2gtk-4.1-0` (pulls the rest). Without root: unpack the runtime `.deb`s into a directory and set `LD_LIBRARY_PATH` — recipe in [`patches/README.md`](patches/README.md#prebuilt-binary). |
-| **Compile** | Full Tauri Linux prerequisites — WebKitGTK/GTK **dev** packages — because the proxy links the whole `cc_switch_lib` crate (`cc-switch/src-tauri`), not because of OAuth. | See [`cc-switch/CONTRIBUTING.md`](cc-switch/CONTRIBUTING.md); a root-free build is possible by extracting dev `.deb`s into a sysroot and pointing `pkg-config`/`LIBRARY_PATH` at it. |
+| **Run** | Only glibc + OpenSSL 3 — `ldd` lists `libssl.so.3`, `libcrypto.so.3`, `libgcc_s`, `libm`, `libc` and **no WebKitGTK/GTK/JavaScriptCore**, because the proxy is built from the Tauri-free `cc-switch-core` workspace member. | Nothing extra: it runs as-is, with no `LD_LIBRARY_PATH`. (Pre-split binaries needed the WebKitGTK 4.1 runtime — legacy recipe in [`patches/README.md`](patches/README.md#prebuilt-binary).) |
+| **Compile** | A plain Rust toolchain — no WebKitGTK/GTK **dev** packages. Those were only needed while the proxy linked the whole `cc_switch_lib` crate (not an OAuth requirement); the split removed that. The desktop GUI still needs the full Tauri prerequisites. | `make binary`, or by hand `cargo build --release -p cc-switch-core --bin cc-switch-proxy` — see [`patches/README.md`](patches/README.md). |
 
 > **OAuth limit**: login-based providers (GitHub Copilot, ChatGPT/Codex, xAI) only
 > work through the cc-switch **desktop** app — the headless daemon has no

@@ -7,23 +7,46 @@ place and never commit our changes into it — carry them in the patch here.
 ## `cc-switch-headless-proxy.patch`
 
 Adds a headless Linux daemon, `cc-switch-proxy`, that runs cc-switch's existing
-Rust local-routing engine (`src-tauri/src/proxy/`) **without the Tauri window or
-tray**, reading providers/models from cc-switch's SQLite DB. This is the piece
-that lets `linux_switch` spawn the Rust router instead of LiteLLM.
+Rust local-routing engine (`src-tauri/core/src/proxy/`) **without the Tauri
+window or tray**, reading providers/models from cc-switch's SQLite DB. This is
+the piece that lets `linux_switch` spawn the Rust router instead of LiteLLM.
+The engine is split out into a Tauri-free workspace member (`cc-switch-core`),
+so the daemon neither links nor needs WebKitGTK/GTK.
 
-- Applies to cc-switch `86e23b63` (v4.0.33). Touches:
-  - `src-tauri/Cargo.toml` — enables tokio's `signal` feature (no `Cargo.lock`
-    change at v4.0.33: upstream already records tokio's `signal-hook-registry` edge)
-  - `src-tauri/src/database/mod.rs` — splits `Database::init()` into `init()` + `init_at(path)`
-  - `src-tauri/src/lib.rs` — declares `pub mod headless;`, `pub mod provider_cli;`, `pub mod proxy_cli;`
-  - `src-tauri/src/headless.rs` — new module: arg parsing, DB open, proxy start/stop
-  - `src-tauri/src/provider_cli.rs` — new module: `provider` subcommands (DAO-backed)
-  - `src-tauri/src/proxy_cli.rs` — new module: `proxy` subcommand (global outbound proxy, DAO-backed)
-  - `src-tauri/src/bin/cc-switch-proxy.rs` — new binary entrypoint
-  - Native engine (per-model transport, see below): `src-tauri/src/proxy/model_route.rs`
-    (new), `src-tauri/src/proxy/mod.rs` (module decl), `src-tauri/src/proxy/forwarder.rs`
-    (url/key/format overrides), `src-tauri/src/proxy/handlers.rs` (anthropic
-    passthrough arm), `src-tauri/src/proxy/providers/claude.rs` (`needs_transform` gate)
+- Applies to cc-switch `86e23b63` (v4.0.33). Touches (the bulk is the workspace
+  split — ~310 engine files move from `src-tauri/src/` to `src-tauri/core/src/`,
+  so the patch is large by design; the substantive additions are listed last):
+  - `src-tauri/Cargo.toml` — turns the package into a workspace root
+    (`[workspace] members = ["core"]`), depends on the new `cc-switch-core`;
+    enables tokio's `signal` feature (no `Cargo.lock` behaviour change beyond
+    the workspace edge: upstream already records tokio's `signal-hook-registry`)
+  - `src-tauri/core/` — **new workspace member `cc-switch-core`** (lib
+    `cc_switch_core`, `publish = false`): the whole Tauri-free engine — proxy
+    router, DAOs, provider configs, headless CLI, session/live/MCP services.
+    It depends on **no** `tauri*` / `webkit2gtk` / `gtk` crate (gate:
+    `cargo tree -p cc-switch-core -i tauri` matches nothing)
+  - `src-tauri/src/lib.rs` — `pub use cc_switch_core::{…}` re-exports every moved
+    module, so app-side `crate::<module>` paths and the integration tests'
+    `cc_switch_lib::<module>` paths are unchanged; app-only modules (tray,
+    commands, GUI sink, auto-launch, updater, window fit…) stay here
+  - `src-tauri/src/services/mod.rs` — `pub use cc_switch_core::services::*;`
+    plus the app-only services (config, s3/webdav sync, speedtest,
+    backup-storage, balance, stream-check, …)
+  - `src-tauri/src/database/mod.rs` — split moved to core; `Database::init()`
+    vs `init_at(path)` lives there
+  - `src-tauri/core/src/headless.rs` — new module: arg parsing, DB open, proxy
+    start/stop
+  - `src-tauri/core/src/provider_cli.rs` — new module: `provider` subcommands
+    (DAO-backed)
+  - `src-tauri/core/src/proxy_cli.rs` — new module: `proxy` subcommand (global
+    outbound proxy, DAO-backed)
+  - `src-tauri/core/src/bin/cc-switch-proxy.rs` — new binary entrypoint
+  - Native engine (per-model transport, see below):
+    `src-tauri/core/src/proxy/model_route.rs` (new),
+    `src-tauri/core/src/proxy/mod.rs` (module decl),
+    `src-tauri/core/src/proxy/forwarder.rs` (url/key/format overrides),
+    `src-tauri/core/src/proxy/handlers.rs` (anthropic passthrough arm),
+    `src-tauri/core/src/proxy/providers/claude.rs` (`needs_transform` gate)
 
 ### Apply
 
@@ -50,13 +73,13 @@ applies the patch in a throwaway git worktree, release-builds, strips, and
 installs the result to `bin/` (the cc-switch tree is left untouched). Point it at
 another checkout with `make binary CC_SWITCH_DIR=/path/to/cc-switch`.
 
-To build by hand instead (needs the Tauri Linux prerequisites — see
-`../cc-switch/CONTRIBUTING.md`). The frontend `dist/` placeholder must exist even
-for this backend-only binary:
+To build by hand instead — **a plain Rust toolchain is enough**: the proxy is
+built from the Tauri-free `cc-switch-core` workspace member, so no
+WebKitGTK/GTK dev packages are involved (the desktop GUI still needs them; the
+frontend `dist/` placeholder is likewise only required for the GUI build):
 
 ```bash
-mkdir -p dist
-cargo build --release --bin cc-switch-proxy --manifest-path src-tauri/Cargo.toml
+cargo build --release -p cc-switch-core --bin cc-switch-proxy --manifest-path src-tauri/Cargo.toml
 ./src-tauri/target/release/cc-switch-proxy --help
 # ./src-tauri/target/release/cc-switch-proxy --port 9301
 ```
@@ -70,16 +93,16 @@ override with `--db <path>`. `RUST_LOG` sets the log level (default `info`).
 binary (≈13 MB), so you can skip the Rust toolchain entirely:
 
 - **Platform**: Linux x86_64, glibc.
-- **Runtime**: still needs the WebKitGTK 4.1 / GTK 3 runtime libraries, because it
-  links cc-switch's crate (`cc_switch_lib` → Tauri). On a minimal host the missing
-  pieces are `libwebkit2gtk-4.1.so.0` and `libjavascriptcoregtk-4.1.so.0` plus their
-  deps (`libgstgl-1.0`, `libwebpdemux`, `libharfbuzz-icu`, `libmanette-0.2`,
-  `libenchant-2`, `libhyphen`, `libsecret-1`, and the mesa/egl/gbm + dictionaries
-  packages). Install them with:
-  `sudo apt-get install libwebkit2gtk-4.1-0` (pulls GTK 3, libsoup 3, and the rest).
-  Without root, extract the runtime `.deb`s into a directory and point the daemon at
-  them with `LD_LIBRARY_PATH` (the deployment under `~/deploy` keeps them in
-  `runtime-libs/`):
+- **Runtime**: glibc + OpenSSL 3 only. `ldd` lists five libraries —
+  `libssl.so.3`, `libcrypto.so.3`, `libgcc_s.so.1`, `libm.so.6`, `libc.so.6` —
+  and **no WebKitGTK / GTK / JavaScriptCore**, because the proxy is built from
+  the Tauri-free `cc-switch-core` workspace member. It runs on a minimal host
+  with no extra packages and no `LD_LIBRARY_PATH`.
+  *Legacy (pre-split binaries):* builds from before the workspace split linked
+  `cc_switch_lib` → Tauri and needed the WebKitGTK 4.1 runtime (`libwebkit2gtk-4.1.so.0`,
+  `libjavascriptcoregtk-4.1.so.0` and their deps). Such deployments unpacked the
+  runtime `.deb`s into `~/deploy/runtime-libs/` and pointed `LD_LIBRARY_PATH` at
+  them. The recipe is retained only for running an old binary:
   ```bash
   mkdir -p ~/deploy/runtime-libs && cd ~/deploy/runtime-libs
   apt-get download $(apt-get --print-uris -y install --no-install-recommends \
@@ -87,11 +110,13 @@ binary (≈13 MB), so you can skip the Rust toolchain entirely:
   for f in *.deb; do dpkg-deb -x "$f" .; done && rm -f *.deb
   export LD_LIBRARY_PATH=$HOME/deploy/runtime-libs/usr/lib/x86_64-linux-gnu
   ```
-- **Compile-time**: needs the full Tauri Linux prerequisites (WebKitGTK/GTK **dev**
-  packages), because the proxy links the whole `cc_switch_lib` crate. This is a
-  Tauri requirement, **not** OAuth. Root-free build recipe (the dev closure into
-  a sysroot; **already-installed dev packages do not appear in the download
-  closure**, so also let pkg-config/gcc fall back to the host after the sysroot):
+- **Compile-time**: a plain Rust toolchain suffices — the proxy does **not** need
+  the Tauri Linux prerequisites (WebKitGTK/GTK **dev** packages); that was a
+  property of the pre-split crate layout (**not** an OAuth requirement). The
+  desktop GUI, however, still needs them. Root-free recipe for a **GUI** build
+  (or a pre-split proxy binary): extract the dev closure into a sysroot —
+  **already-installed dev packages do not appear in the download closure**, so
+  also let pkg-config/gcc fall back to the host after the sysroot:
   ```bash
   # 1. sysroot = dev-package closure, extracted without root
   mkdir -p ~/.cache/cc-switch-proxy-sysroot && cd $_
@@ -273,19 +298,23 @@ restart `cc-switch-proxy` after `set`/`clear` for it to take effect
 
 ### Caveats
 
-- **Verified** on Ubuntu 24.04 with Rust 1.95 (re-run on v4.0.33,
-  2026-11-16): `cargo build --bin cc-switch-proxy`
-  links, `cargo test --lib headless provider_cli proxy_cli` passes (17 tests
-  across the three subcommand modules), `cargo fmt`/`clippy -D warnings` are
-  clean, the full `cargo test --lib` suite is green (4878 passed, 14 ignored —
-  the upstream codex timing test occasionally flaps on a heavily loaded box but
-  passes standalone), the daemon boots
-  (`/health` → 200, `/status` → running, clean SIGTERM shutdown), and both
-  `provider add/list/update/set-current/delete/import` and `proxy
-  get/set/clear` subcommands were exercised end-to-end against throwaway DBs.
-- The binary still links Tauri/WebKitGTK runtime libraries (it shares the crate
-  with the desktop app), so a headless host needs the WebKitGTK runtime installed
-  to *run* it — and the full Tauri Linux build prerequisites to compile it.
+- **Verified** on Ubuntu 24.04 with Rust 1.95 (workspace split, 2026-11-17):
+  `cargo build --release -p cc-switch-core --bin cc-switch-proxy` links in
+  ~4 min at `-j4`; `ldd` shows exactly five libraries (`libssl`, `libcrypto`,
+  `libgcc_s`, `libm`, `libc`) and **no WebKitGTK/GTK/JavaScriptCore**;
+  `cargo tree -p cc-switch-core -i tauri` matches nothing; the binary runs with
+  `LD_LIBRARY_PATH` unset; `cargo fmt` and `clippy --all-targets -D warnings`
+  are clean for **both** crates; the split test suites are green —
+  `cc-switch-core` 4245 passed / 11 ignored and the desktop crate 634 passed /
+  3 ignored (4879 passed + 14 ignored in total; the upstream codex timing test
+  occasionally flaps on a heavily loaded box but passes standalone); the
+  desktop crate still builds on the sysroot (`cargo build -p cc-switch`); the
+  daemon boots on `--port 9301` (`/health` → 200, `/status` → running, clean
+  SIGTERM shutdown, exit 0); and both `provider add/list/set-current` and
+  `proxy get/set/clear` were exercised end-to-end against a throwaway DB.
+- The binary **no longer** links Tauri/WebKitGTK/GTK: the engine lives in the
+  Tauri-free `cc-switch-core` workspace member, so a headless host needs only
+  glibc + OpenSSL to run it and only a Rust toolchain to build it.
 - **OAuth providers are unusable headless (confirmed in code).** The daemon
   passes `None` as `AppHandle` (`ProxyServer::new(config, db.clone(), None)`),
   so the Copilot / CodexOAuth / XaiOAuth strategies hit their `else` arm and
@@ -300,10 +329,17 @@ restart `cc-switch-proxy` after `set`/`clear` for it to take effect
 
 ### Regenerating
 
-From a cc-switch checkout with the changes applied:
+From a cc-switch checkout with the changes applied — stage everything and diff
+the index, so the patch includes the new `src-tauri/core/` files **and** the
+~310 deletions left by the move (`git add -N . && git diff` silently drops
+staged deletions — do not use it):
 
 ```bash
-git add -A
+git add -A                        # new files + moved-away deletions
 git diff --cached > /path/to/linux_switch/patches/cc-switch-headless-proxy.patch
-git reset
+git reset                         # back to an unstaged worktree
 ```
+
+The patch carries ~310 moved engine files plus the new crate's manifests, so it
+is much larger than the original headless-only patch; `git apply` replays the
+moves as delete/add pairs.

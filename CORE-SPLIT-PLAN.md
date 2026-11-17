@@ -1,7 +1,10 @@
 # 拆分 tauri-free core 库：cc-switch-proxy 无 WebKit 化（CORE-SPLIT-PLAN）
 
-> **状态：计划（未执行）**。目标 pin：`86e23b63`（v4.0.33），与现有
-> `patches/cc-switch-headless-proxy.patch`（12 文件）同一基线。
+> **状态：已执行（2026-11-17）**。目标 pin：`86e23b63`（v4.0.33）。
+> 结果：core 无 tauri 依赖；daemon `ldd` 仅 5 个基础库（无 WebKitGTK/GTK/JSC），
+> 不设 `LD_LIBRARY_PATH` 即可运行；GUI 构建与 commands/tray 行为不变；
+> Rust 测试 4879 passed / 14 ignored（合计 4893），Python e2e 110/110。
+> 与计划的差异见 §11。
 > 本文档沿用 `UPDATE-PLAN-v4.0.33.md` 的体例：每步带验证门；构建纪律
 > （`CARGO_BUILD_JOBS=4`、`RUSTFLAGS="-C linker-features=-lld"`、sysroot
 > `~/.cache/cc-switch-proxy-sysroot`、`CC_SWITCH_TEST_HOME` 隔离、先 check 后
@@ -598,6 +601,40 @@ runtime-libs/EnvironmentFile 拐棍，但 `~/.cc-switch/cc-switch.db` 首启迁�
 | 构建门/ldd/e2e/Makefile/补丁再生/文档 | 0.5-1 天 |
 | **合计（Phase 1）** | **4-6 个专注工作日** |
 | Phase 2 上游 PR 打磨 + review 迭代 | 另计（不可控，判据见 §8） |
+
+## 11. 执行偏差记录（2026-11-17）
+
+所有计划目标达成（core 无 tauri、daemon 无 WebKit、GUI 不变、测试守恒、C2 修复）。
+以下是与计划的**实际差异**，均为编译器闭包裁决或执行发现，不是设计变更：
+
+### 11.1 模块归属（对齐 §5）
+
+1. `services/mcp.rs` → **core**（§5 原列 app）：被 provider 闭包拉入，且只依赖 core 侧类型。
+2. `lightweight.rs` 留在 **app**（§5 倾向 core）：桌面窗口相关，core 闭包不需要。
+3. `services/speedtest.rs`、`services/config.rs`、`s3*/webdav*`、`backup_storage`、`balance`、`stream_check`、`sync_protocol` 等留在 **app**（未被 core 闭包拉入）。
+4. `sync_mutex` 从 app `services/sync_protocol` 提取到 `core/src/sync_utils.rs`（app 侧保留薄委托）：core 的 `services/prompt.rs` 需要它，而 sync_protocol 依赖 app 的 webdav/s3。
+5. `initialize_common_config_snippets` 与日志脱敏 helper（`url_for_log*`、`redact_*`、`error_for_log`、`RedactedUrl`）从 app `lib.rs` 移到 core `lib.rs`，app 侧 `pub use` 重导出。
+
+### 11.2 跨 crate 测试可见性（执行发现）
+
+`#[cfg(test)]` 在 core 作为依赖参与 app 测试构建时**不编译**。因此这些仅测试用的项去掉 cfg 并 `pub`：`test_support` 模块（pi/omp/copilot）、`TEST_AGENT_DIR` 覆盖、`take_test_notify_count`、`seed_test_account_with_token_endpoint`、tool_cmd 的 `windows|test` 项。行为不变，仅测试路径可达。
+
+`webdav_and_s3_operations_share_one_sync_mutex` 的收尾断言改为“5s 内可重新获取”：tokio Mutex 的公平移交会在释放瞬间把锁交给排队者，瞬时 `try_lock` 在并行测试下不可靠。
+
+### 11.3 补丁与构建
+
+- 补丁远大于 §10 的 50-70 文件估计：331 个 diff 入口（303 rename + 16 新增 + 11 修改 + 1 删除），~545 KB；`git apply` 以 rename 形式重放 304 个搬移文件。
+- 再生方法修正：`git add -N . && git diff` 会**丢掉搬移删除**（`git add -N` 顺带把删除入了 index），改为 `git add -A && git diff --cached && git reset`；`patches/README.md` / `CLAUDE.md` 已同步。
+- `make binary` 改为 `cargo build --release -p cc-switch-core --bin cc-switch-proxy`；workspace target 目录不变；`mkdir dist` 仅为 GUI 兼容保留。
+- 冷构建约 12 分钟（-j4），可重复（两次独立冷构建产物同为 14015520 字节）。
+
+### 11.4 验证结果（实跑）
+
+- Rust：core 4245 passed / 11 ignored；app 634 passed / 3 ignored → 4879 passed + 14 ignored = 4893（v4.0.33 基线 4892 + C2 回归测试 1；名称级对账零丢失）。fmt/clippy `--all-targets -D warnings` 两 crate 全清。
+- daemon：`ldd` 仅 5 个库（libssl/libcrypto/libgcc_s/libm/libc），无 WebKitGTK/GTK/JSC；未设 `LD_LIBRARY_PATH` 时 `--help` 可用；`--port 9301` → `/health` 200、`/status` running、SIGTERM 干净退出（exit 0）；`provider`/`proxy` CLI 冒烟通过。
+- GUI：`cargo build -p cc-switch` 成功（app 测试计数与步骤 10 一致）。
+- 补丁：`make check` 对 pristine 子模块 “patch applies cleanly”；canonical 冷 `make binary` 通过步骤 11 全部门。
+- Python e2e：110/110 OK（新二进制、刻意不设 `LD_LIBRARY_PATH`）。首轮 1 个 live 用例（opencode `mimo-v2.6-flash`）收到上游空回复失败，单跑与全量重跑均绿，判定为上游瞬时 flake。
 
 ---
 

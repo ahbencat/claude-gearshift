@@ -104,7 +104,7 @@ Web UI **全程密码保护** —— 每个页面、每个 API 接口都必须�
 > 打到死节点 URL 会失败而不回落默认接入点，改成只带 format 的路由即恢复；模型路由的
 > format 决定上游路径（`/v1/responses` 或 `/v1/chat/completions`，用本机记录型 sink
 > 验证）。开启即写两个网络分派键——模型名由用户自己负责。前置条件缺失（无二进制、
-> 无 WebKitGTK 运行库、无接入点）时自动跳过。详见
+> 无接入点）时自动跳过。详见
 > [`TEST-REPORT.md`](TEST-REPORT.md)。
 > 导入的配置文件里写顶层 `"api_format"`，在 `provider import` 时同样被识别。
 
@@ -205,8 +205,8 @@ systemctl --user restart dd-switch
 
 | 阶段 | 需要什么 | 怎么提供 |
 |---|---|---|
-| **运行期** | `libwebkit2gtk-4.1.so.0` 与 `libjavascriptcoregtk-4.1.so.0` 及其依赖（`libgstgl-1.0`、`libwebpdemux`、`libharfbuzz-icu`、`libmanette-0.2`、`libenchant-2`、`libhyphen`、`libsecret-1`，以及 mesa/egl/gbm、词典包）。GTK 3 / libsoup 3 一般已随系统装好。 | 有 root：`sudo apt-get install libwebkit2gtk-4.1-0`（会自动带上其余依赖）。免 root：把运行库 `.deb` 解包到一个目录，再用 `LD_LIBRARY_PATH` 指过去——命令见 [`patches/README.md`](patches/README.md#prebuilt-binary)。 |
-| **编译期** | 完整的 Tauri Linux 前置——WebKitGTK/GTK **dev** 包。因为 proxy 链接的是整个 `cc_switch_lib` crate（`cc-switch/src-tauri`），这是 **Tauri 的要求**，与 OAuth 无关。 | 见 [`cc-switch/CONTRIBUTING.md`](cc-switch/CONTRIBUTING.md)；免 root 编译也可行：把 dev `.deb` 解包成 sysroot，再用 `pkg-config`/`LIBRARY_PATH` 指过去。 |
+| **运行期** | 只要 glibc + OpenSSL 3——`ldd` 只列出 `libssl.so.3`、`libcrypto.so.3`、`libgcc_s`、`libm`、`libc`，**没有 WebKitGTK/GTK/JavaScriptCore**：proxy 由不含 Tauri 的 `cc-switch-core` workspace member 构建。 | 不需要任何额外安装，也不需要 `LD_LIBRARY_PATH`，直接就能跑。（拆分前的旧二进制才需要 WebKitGTK 4.1 运行库——旧配方见 [`patches/README.md`](patches/README.md#prebuilt-binary)。） |
+| **编译期** | 只要 Rust 工具链——不再需要 WebKitGTK/GTK **dev** 包。那是 proxy 还链接整个 `cc_switch_lib` crate 时的要求（与 OAuth 无关），拆分后已消失；桌面 GUI 仍然需要完整的 Tauri 前置。 | `make binary`，或手工 `cargo build --release -p cc-switch-core --bin cc-switch-proxy`——见 [`patches/README.md`](patches/README.md)。 |
 
 > **OAuth 限制**：走登录授权的供应商（GitHub Copilot、ChatGPT/Codex、xAI）只能在
 > cc-switch **桌面端**里用——headless 守护进程没有 `AppHandle`，只支持 API Key 类
