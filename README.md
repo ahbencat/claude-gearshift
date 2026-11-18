@@ -122,8 +122,8 @@ SQLite database.
 > proven against a recording localhost sink). Starting writes only the two
 > dispatch keys — model names stay the user's own. Prerequisites missing
 > (no binary, no endpoint) ⇒ the suite skips.
-> Details in [`TEST-REPORT.md`](TEST-REPORT.md). A top-level `"api_format"` in
-> an imported file is likewise honored on `provider import`.
+> A top-level `"api_format"` in an imported file is likewise honored on
+> `provider import`.
 
 **When do you actually need it** — local routing only earns its keep in two
 situations:
